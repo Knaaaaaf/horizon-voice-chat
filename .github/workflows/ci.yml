@@ -24,6 +24,8 @@ jobs:
       - run: cargo clippy --workspace --all-targets --locked --offline -- -D warnings
       - run: cargo test --workspace --locked --offline
       - run: python3 tools/test_template.py
+      - name: Test authenticated relay framing and abuse limits
+        run: python3 tools/relay/test_server.py
 
   native-audio:
     runs-on: ubuntu-latest
