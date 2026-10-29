@@ -877,7 +877,7 @@ pub mod native_bridge {
 
             // 20 game ticks/s: poll twice a second. Retry profile discovery
             // at the same cadence when the launcher uses an unusual directory.
-            if self.ticks == 1 || self.ticks % 10 == 1
+            if (self.ticks == 1 || self.ticks % 10 == 1)
                 && let Some(dir) = settings_directory()
             {
                 self.settings = read_settings_at(&dir);
