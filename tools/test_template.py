@@ -51,8 +51,9 @@ impl Game<'_> {
     let mut game=Game {positions:&mut positions};
     assert_eq!(game.break_block([1,2,3]),7);
     assert_eq!(game.break_block([-1,64,8]),7);
-    assert_eq!(positions,vec![[1,2,3],[-1,64,8]]);
     game.tick();
+    drop(game);
+    assert_eq!(positions,vec![[1,2,3],[-1,64,8]]);
 }
 ''')
         (original/'rust-toolchain.toml').write_bytes((root/'rust-toolchain.toml').read_bytes())
