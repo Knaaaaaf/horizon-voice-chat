@@ -370,6 +370,105 @@ pub mod microphone {
     }
 }
 
+pub mod pcm_codec {
+    use super::voice_protocol::{MAX_PAYLOAD_BYTES, Packet, PacketKind};
+
+    pub const PCM_HEADER_LEN: usize = 6;
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub enum PcmFrameError {
+        PayloadTooShort,
+        PayloadTooLarge,
+        InvalidSampleRate,
+        InvalidFrameLength,
+        LengthMismatch,
+        WrongPacketKind,
+    }
+
+    /// Uncompressed mono PCM16 audio frame. Frames represent approximately 10 ms.
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    pub struct PcmFrame {
+        pub sample_rate: u32,
+        pub samples: Vec<i16>,
+    }
+
+    impl PcmFrame {
+        pub fn encode_payload(&self) -> Result<Vec<u8>, PcmFrameError> {
+            validate_sample_rate(self.sample_rate)?;
+            let expected = (self.sample_rate as usize).div_ceil(100);
+            if self.samples.len() != expected {
+                return Err(PcmFrameError::InvalidFrameLength);
+            }
+            let payload_len = PCM_HEADER_LEN + self.samples.len() * 2;
+            if payload_len > MAX_PAYLOAD_BYTES {
+                return Err(PcmFrameError::PayloadTooLarge);
+            }
+
+            let mut payload = Vec::with_capacity(payload_len);
+            payload.extend_from_slice(&self.sample_rate.to_le_bytes());
+            payload.extend_from_slice(&(self.samples.len() as u16).to_le_bytes());
+            for sample in &self.samples {
+                payload.extend_from_slice(&sample.to_le_bytes());
+            }
+            Ok(payload)
+        }
+
+        pub fn decode_payload(payload: &[u8]) -> Result<Self, PcmFrameError> {
+            if payload.len() < PCM_HEADER_LEN {
+                return Err(PcmFrameError::PayloadTooShort);
+            }
+            if payload.len() > MAX_PAYLOAD_BYTES {
+                return Err(PcmFrameError::PayloadTooLarge);
+            }
+
+            let sample_rate = u32::from_le_bytes([
+                payload[0], payload[1], payload[2], payload[3],
+            ]);
+            validate_sample_rate(sample_rate)?;
+            let sample_count = u16::from_le_bytes([payload[4], payload[5]]) as usize;
+            let expected = (sample_rate as usize).div_ceil(100);
+            if sample_count != expected {
+                return Err(PcmFrameError::InvalidFrameLength);
+            }
+            if payload.len() != PCM_HEADER_LEN + sample_count * 2 {
+                return Err(PcmFrameError::LengthMismatch);
+            }
+
+            let samples = payload[PCM_HEADER_LEN..]
+                .chunks_exact(2)
+                .map(|bytes| i16::from_le_bytes([bytes[0], bytes[1]]))
+                .collect();
+            Ok(Self {
+                sample_rate,
+                samples,
+            })
+        }
+
+        pub fn to_packet(&self, sequence: u32) -> Result<Packet, PcmFrameError> {
+            Ok(Packet {
+                kind: PacketKind::AudioFrame,
+                sequence,
+                payload: self.encode_payload()?,
+            })
+        }
+
+        pub fn from_packet(packet: &Packet) -> Result<Self, PcmFrameError> {
+            if packet.kind != PacketKind::AudioFrame {
+                return Err(PcmFrameError::WrongPacketKind);
+            }
+            Self::decode_payload(&packet.payload)
+        }
+    }
+
+    fn validate_sample_rate(sample_rate: u32) -> Result<(), PcmFrameError> {
+        if (8_000..=48_000).contains(&sample_rate) {
+            Ok(())
+        } else {
+            Err(PcmFrameError::InvalidSampleRate)
+        }
+    }
+}
+
 pub mod rate_limiter {
     /// A small token bucket for per-session relay rate limiting.
     ///
@@ -581,6 +680,7 @@ pub fn before_break(pos: [i32; 3]) {
 mod tests {
     use super::jitter_buffer::{JitterBuffer, PushError};
     use super::pcm_capture::PcmFrameAssembler;
+    use super::pcm_codec::{PcmFrame, PcmFrameError};
     use super::proximity::{eligible_recipients, within_range};
     use super::rate_limiter::TokenBucket;
     use super::voice_protocol::{
@@ -791,5 +891,56 @@ mod tests {
         let frame = receiver.try_recv().unwrap();
         assert_eq!(frame.len(), 80);
         assert!(frame.iter().all(|sample| *sample == 2_000));
+    }
+
+    #[test]
+    fn pcm_frame_payload_round_trips_and_fits_voice_datagram() {
+        let frame = PcmFrame {
+            sample_rate: 48_000,
+            samples: vec![123; 480],
+        };
+        let packet = frame.to_packet(17).unwrap();
+        let wire = packet.encode().unwrap();
+        assert!(wire.len() < super::voice_protocol::MAX_DATAGRAM_BYTES);
+        let decoded_packet = Packet::decode(&wire).unwrap();
+        assert_eq!(PcmFrame::from_packet(&decoded_packet).unwrap(), frame);
+    }
+
+    #[test]
+    fn pcm_frame_payload_rejects_wrong_lengths_rates_and_packet_kinds() {
+        let frame = PcmFrame {
+            sample_rate: 16_000,
+            samples: vec![0; 160],
+        };
+        let mut payload = frame.encode_payload().unwrap();
+        payload[4] = 159;
+        assert_eq!(
+            PcmFrame::decode_payload(&payload),
+            Err(PcmFrameError::InvalidFrameLength)
+        );
+
+        assert_eq!(
+            PcmFrame::decode_payload(&[0; 5]),
+            Err(PcmFrameError::PayloadTooShort)
+        );
+
+        let invalid_rate = PcmFrame {
+            sample_rate: 96_000,
+            samples: vec![0; 960],
+        };
+        assert_eq!(
+            invalid_rate.encode_payload(),
+            Err(PcmFrameError::InvalidSampleRate)
+        );
+
+        let hello = Packet {
+            kind: PacketKind::Hello,
+            sequence: 1,
+            payload: frame.encode_payload().unwrap(),
+        };
+        assert_eq!(
+            PcmFrame::from_packet(&hello),
+            Err(PcmFrameError::WrongPacketKind)
+        );
     }
 }
