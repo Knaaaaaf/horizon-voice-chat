@@ -141,6 +141,69 @@ pub mod voice_protocol {
     }
 }
 
+pub mod rate_limiter {
+    /// A small token bucket for per-session relay rate limiting.
+    ///
+    /// Time is supplied by the caller so tests are deterministic. This is not
+    /// authentication; the caller must key buckets by verified session IDs.
+    pub struct TokenBucket {
+        capacity_milli: u64,
+        tokens_milli: u64,
+        refill_tokens_per_second: u32,
+        last_ms: u64,
+    }
+
+    impl TokenBucket {
+        /// Returns None for a zero capacity or a zero refill rate.
+        pub fn new(
+            capacity_tokens: u32,
+            refill_tokens_per_second: u32,
+            now_ms: u64,
+        ) -> Option<Self> {
+            if capacity_tokens == 0 || refill_tokens_per_second == 0 {
+                return None;
+            }
+            let capacity_milli = u64::from(capacity_tokens) * 1000;
+            Some(Self {
+                capacity_milli,
+                tokens_milli: capacity_milli,
+                refill_tokens_per_second,
+                last_ms: now_ms,
+            })
+        }
+
+        /// Consume whole tokens, refilling from elapsed milliseconds first.
+        /// Invalid zero-cost or over-capacity requests are rejected.
+        pub fn allow(&mut self, now_ms: u64, cost_tokens: u32) -> bool {
+            if cost_tokens == 0 {
+                return false;
+            }
+
+            if now_ms >= self.last_ms {
+                let elapsed_ms = now_ms - self.last_ms;
+                let refill = elapsed_ms
+                    .saturating_mul(u64::from(self.refill_tokens_per_second));
+                self.tokens_milli = self
+                    .tokens_milli
+                    .saturating_add(refill)
+                    .min(self.capacity_milli);
+                self.last_ms = now_ms;
+            }
+
+            let cost_milli = u64::from(cost_tokens) * 1000;
+            if cost_milli > self.capacity_milli || self.tokens_milli < cost_milli {
+                return false;
+            }
+            self.tokens_milli -= cost_milli;
+            true
+        }
+
+        pub fn available_milli_tokens(&self) -> u64 {
+            self.tokens_milli
+        }
+    }
+}
+
 pub mod jitter_buffer {
     use std::collections::BTreeMap;
 
@@ -290,6 +353,7 @@ pub fn before_break(pos: [i32; 3]) {
 mod tests {
     use super::jitter_buffer::{JitterBuffer, PushError};
     use super::proximity::{eligible_recipients, within_range};
+    use super::rate_limiter::TokenBucket;
     use super::voice_protocol::{
         CodecError, HEADER_LEN, MAX_DATAGRAM_BYTES, MAX_PAYLOAD_BYTES, Packet, PacketKind,
         SequenceGuard,
@@ -456,5 +520,31 @@ mod tests {
         assert_eq!(buffer.pop_next().unwrap().sequence, 7);
         assert!(!buffer.skip_missing(7));
         assert!(!buffer.skip_missing(6));
+    }
+
+    #[test]
+    fn token_bucket_enforces_capacity_and_refills_over_time() {
+        let mut bucket = TokenBucket::new(3, 2, 1_000).unwrap();
+        assert!(bucket.allow(1_000, 1));
+        assert!(bucket.allow(1_000, 1));
+        assert!(bucket.allow(1_000, 1));
+        assert!(!bucket.allow(1_000, 1));
+        assert!(bucket.allow(1_500, 1));
+        assert!(!bucket.allow(1_500, 1));
+        assert!(bucket.allow(2_000, 1));
+    }
+
+    #[test]
+    fn token_bucket_rejects_invalid_costs_and_does_not_refill_on_clock_rewind() {
+        assert!(TokenBucket::new(0, 1, 0).is_none());
+        assert!(TokenBucket::new(1, 0, 0).is_none());
+        let mut bucket = TokenBucket::new(2, 1, 100).unwrap();
+        assert!(!bucket.allow(100, 0));
+        assert!(!bucket.allow(100, 3));
+        assert!(bucket.allow(100, 1));
+        assert!(bucket.allow(100, 1));
+        assert!(!bucket.allow(50, 1));
+        assert_eq!(bucket.available_milli_tokens(), 0);
+        assert!(bucket.allow(1_100, 1));
     }
 }
