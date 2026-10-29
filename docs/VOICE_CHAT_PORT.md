@@ -32,9 +32,11 @@ experimental server mods. It does not expose a mod-facing microphone capture
 interface or a client/server networking channel for a mod's two halves. A Java
 Simple Voice Chat jar cannot be loaded by Horizon.
 
-Those integration points need upstream support or a separate, well-defined
-native host extension before a playable end-to-end port can be completed. Avoid
-guessing API names or patching source with string-based rewrites.
+The local microphone integration uses a narrow native host extension instead
+of inventing sandbox API: it reads only the companion's own storage directory.
+See [NATIVE_BRIDGE.md](NATIVE_BRIDGE.md) for discovery and configuration.
+Because sandboxed mods still cannot open sockets, transport and relay must be
+implemented as separate native components.
 
 ## Intended architecture
 
