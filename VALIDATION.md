@@ -1,30 +1,31 @@
 # Validation
 
-## Automated checks
+## Latest GitHub Actions run
 
-GitHub Actions passed for the voice-chat foundation on 2026-10-29:
-[workflow run 40889070675](https://github.com/Knaaaaaf/horizon-voice-chat/actions/runs/40889070675),
-associated with branch commit 209c5c66fe5c0aa0ceb2fecf44256cbfd66fc84f.
+Run 40964713173 is validating head commit
+73037fce593fe1f9e11ca8b2e3bc9c6305522eb3:
+https://github.com/Knaaaaaf/horizon-voice-chat/actions/runs/40964713173
 
+- `cargo fetch --locked` — passed.
 - `cargo fmt --all --check` — passed.
 - `cargo clippy --workspace --all-targets --locked --offline -- -D warnings` — passed.
 - `cargo test --workspace --locked --offline` — passed.
-- `python3 tools/test_template.py` — passed; the actual mixin bundle compiled in
-  the tiny fixture, the original method/result stayed intact, and source-audit
-  plus deterministic-staging checks passed.
+- `python3 tools/test_template.py` — running when this file was updated.
 
-These checks ran on a GitHub-hosted Linux runner with Rust 1.95.0. They verify
-the standalone packet/proximity helpers and the native-mixin staging fixture;
-they are not a gameplay or audio integration test.
+## Scope of checks
+
+The standalone Rust tests cover packet framing, sequence guards, proximity
+selection, jitter-buffer ordering/loss skips, and token-bucket refill. The
+native-mixin fixture checks that the runtime can be staged into the pinned
+source-mixin path. Even a fully green fixture is not a gameplay/audio test.
 
 ## Still unverified
 
-- Full build/check/test against the complete pinned Horizon source export.
+- Full native Horizon source export and gameplay build/test.
 - Microphone capture, audio playback, codec integration, real UDP transport,
-  authenticated sessions, server relay, and proximity filtering in multiplayer.
+  authenticated sessions, server relay, and multiplayer proximity audio.
 - Compatibility on Windows/macOS or with a live Minecraft server.
 
-The pinned Horizon mod API still lacks a mod-facing microphone capture
-interface and a client/server networking channel for mod halves. The code in
-this repository is a tested protocol/geometry foundation, **not a functional
-voice-chat mod yet**.
+The pinned Horizon mod API does not provide a mod-facing microphone interface
+or a client/server channel for mod halves. This remains a tested protocol and
+geometry foundation, **not a functional voice-chat mod yet**.
