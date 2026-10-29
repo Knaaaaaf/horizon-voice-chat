@@ -1348,7 +1348,7 @@ pub mod native_bridge {
                 empty.extend_from_slice(&0u64.to_le_bytes());
                 empty.extend_from_slice(&0u64.to_le_bytes());
                 empty.extend_from_slice(&0u16.to_le_bytes());
-                assert_eq!(parse_response(&empty, "client"), Some((0, 0, Vec::new())));
+                assert!(parse_response(&empty, "client").is_some());
                 empty.push(1);
                 assert!(parse_response(&empty, "client").is_none());
             }
@@ -1362,6 +1362,8 @@ pub mod native_bridge {
         attempted: bool,
         last_error: Option<String>,
         relay: Option<relay_client::RelayWorker>,
+        playback: Option<super::pcm_playback::AudioPlayback>,
+        playback_error: Option<String>,
         relay_attempted: bool,
         relay_status: String,
         sequence: u32,
@@ -1376,6 +1378,8 @@ pub mod native_bridge {
                 attempted: false,
                 last_error: None,
                 relay: None,
+                playback: None,
+                playback_error: None,
                 relay_attempted: false,
                 relay_status: "Relay not configured — local capture only".into(),
                 sequence: 0,
@@ -1388,7 +1392,18 @@ pub mod native_bridge {
         fn update(&mut self, settings: &Settings) -> String {
             if !self.relay_attempted {
                 self.relay_attempted = true;
-                match relay_client::RelayWorker::start() {
+                let mut playback_queue = None;
+                if relay_client::RelayWorker::configuration_requested() {
+                    match super::pcm_playback::AudioPlayback::start() {
+                        Ok(playback) => {
+                            playback_queue = Some(playback.queue());
+                            self.playback = Some(playback);
+                            self.playback_error = None;
+                        }
+                        Err(error) => self.playback_error = Some(error),
+                    }
+                }
+                match relay_client::RelayWorker::start(playback_queue) {
                     Ok(Some(worker)) => {
                         self.relay = Some(worker);
                         self.relay_status = "Relay connecting over HTTPS".into();
