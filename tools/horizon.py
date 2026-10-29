@@ -123,7 +123,7 @@ def main():
             if args.action == "build":
                 command.extend(["--profile", "fast"])
             if args.action == "test":
-                command.extend(["game::example_mod::tests", "--", "--nocapture"])
+                command.extend(["game::voice_chat::tests", "--", "--nocapture"])
             with lock(target.parent / (target.name + ".mod-template.lock")):
                 run_start = time.monotonic()
                 result = subprocess.run(command, cwd=output, capture_output=True, text=True)
