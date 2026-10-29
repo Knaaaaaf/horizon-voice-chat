@@ -52,7 +52,7 @@ Simple Voice Chat wire-compatible and must not be treated as secure networking.
 
 ## Suggested milestones
 
-- [x] M1a — add bounded packet framing and sequence-guard logic with unit tests.
+- [x] M1a — add bounded packet framing, sequence guarding, and pure 3D proximity selection with unit tests.
 - [ ] M1b — run Rust tests/Clippy and verify the native staging fixture.
 - [ ] M2 — confirm supported client microphone/playback and mod-network APIs.
 - [ ] M3 — establish a versioned, authenticated two-client relay on a test server.
