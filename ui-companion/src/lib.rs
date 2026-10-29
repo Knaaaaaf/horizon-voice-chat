@@ -98,7 +98,7 @@ impl VoiceUi {
                     if self.push_to_talk {
                         "Push to talk"
                     } else {
-                        "Voice activation (network gate pending)"
+                        "Voice activation (basic level gate)"
                     }
                 ),
             }),
