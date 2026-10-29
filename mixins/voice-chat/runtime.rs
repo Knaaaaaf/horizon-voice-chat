@@ -1358,6 +1358,33 @@ pub mod native_bridge {
             }
 
             #[test]
+            fn playout_keeps_a_frame_through_its_exact_deadline() {
+                let mut pending = BTreeMap::new();
+                let frame = RemoteFrame {
+                    slot: 10,
+                    sample_rate: 8_000,
+                    samples: vec![120; 80],
+                };
+
+                // At slot 18, an 8-slot delayed frame is due now, so mixing must
+                // keep it long enough for flush_ready to enqueue its audio.
+                mix_incoming(&mut pending, vec![frame], 18);
+                assert!(pending.contains_key(&10));
+                flush_ready(&mut pending, &None, 18);
+                assert!(!pending.contains_key(&10));
+
+                // A frame that arrives one slot after its playout deadline is
+                // late and should be discarded rather than adding stale audio.
+                let late = RemoteFrame {
+                    slot: 10,
+                    sample_rate: 8_000,
+                    samples: vec![120; 80],
+                };
+                mix_incoming(&mut pending, vec![late], 19);
+                assert!(!pending.contains_key(&10));
+            }
+
+            #[test]
             fn relay_response_rejects_invalid_headers_and_trailing_data() {
                 assert!(parse_response(b"nope", "client").is_none());
                 let mut empty = Vec::from(&b"HVR1"[..]);
