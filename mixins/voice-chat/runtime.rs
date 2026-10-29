@@ -6,8 +6,8 @@ pub mod voice_protocol {
     pub const MAGIC: [u8; 4] = *b"HVC1";
     pub const VERSION: u8 = 1;
     pub const HEADER_LEN: usize = 14;
-    /// Conservative datagram cap. The current protocol uses UDP-style framing,
-    /// but no socket or network transport is wired up yet.
+    /// Conservative packet cap. HVC1 packets are currently carried inside the
+    /// bounded HTTPS relay envelopes, not sent as raw UDP datagrams.
     pub const MAX_DATAGRAM_BYTES: usize = 1200;
     pub const MAX_PAYLOAD_BYTES: usize = MAX_DATAGRAM_BYTES - HEADER_LEN;
 
@@ -48,8 +48,8 @@ pub mod voice_protocol {
     pub struct Packet {
         pub kind: PacketKind,
         pub sequence: u32,
-        /// Opaque bytes. Audio encoding, authentication and transport are not
-        /// implemented by this framing layer.
+        /// Opaque bytes. Audio payload validation is provided by pcm_codec;
+        /// authentication and transport are handled by the relay layer.
         pub payload: Vec<u8>,
     }
 
