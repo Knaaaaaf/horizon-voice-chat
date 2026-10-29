@@ -266,7 +266,7 @@ pub mod microphone {
     /// Live microphone capture. Construct this only after explicit user opt-in;
     /// dropping it stops the OS input stream.
     pub struct MicrophoneCapture {
-        stream: Stream,
+        _stream: Stream,
         sample_rate: u32,
         channels: u16,
         dropped_frames: Arc<AtomicU64>,
@@ -306,7 +306,7 @@ pub mod microphone {
                 .map_err(|error| CaptureError::StartStream(error.to_string()))?;
 
             Ok(Self {
-                stream,
+                _stream: stream,
                 sample_rate,
                 channels,
                 dropped_frames,
