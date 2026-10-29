@@ -421,9 +421,7 @@ pub mod pcm_codec {
                 return Err(PcmFrameError::PayloadTooLarge);
             }
 
-            let sample_rate = u32::from_le_bytes([
-                payload[0], payload[1], payload[2], payload[3],
-            ]);
+            let sample_rate = u32::from_le_bytes([payload[0], payload[1], payload[2], payload[3]]);
             validate_sample_rate(sample_rate)?;
             let sample_count = u16::from_le_bytes([payload[4], payload[5]]) as usize;
             let expected = (sample_rate as usize).div_ceil(100);
