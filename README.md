@@ -1,98 +1,81 @@
 # Horizon Voice Chat
 
-A native Rust voice-chat port for Horizon, inspired by
-[Simple Voice Chat](https://github.com/henkelmax/simple-voice-chat).
+A native Rust voice-chat prototype for Horizon, inspired by
+[Simple Voice Chat](https://github.com/henkelmax/simple-voice-chat). It is not
+wire-compatible with the Java mod.
 
-> **Status: native capture is wired to the GUI; network voice is not connected yet.**
-> The native mixin polls the companion's own Horizon storage files, honors explicit
-> mic enable/mute and PTT state, and starts/stops the optional cpal capture stream.
-> Captured frames are drained locally; there is still no authenticated transport,
-> server relay, codec compression, or playback.
+> **Status: experimental HTTPS room relay and native PCM playback implemented; not yet a drop-in Simple Voice Chat replacement.**
+> The native mixin connects the in-game GUI to cpal capture, and can send/receive
+> bounded PCM16 frames through the optional authenticated HTTPS relay. The
+> server currently broadcasts within an allowlisted room; the proximity slider
+> does not yet filter recipients by server-authoritative world positions.
 
 ## Implemented
 
-- Versioned packet envelope with a 14-byte header and 1200-byte datagram cap.
-- Validation for magic, version, packet kind, reserved flags and payload size.
-- Monotonic per-session sequence guard with duplicate/stale rejection and
-  u32 wraparound handling.
-- Pure 3D proximity filtering that excludes the speaker and rejects invalid
-  coordinates/ranges.
-- Bounded reorder buffer for late/out-of-order frames, with explicit missing-frame
-  skipping controlled by a future playout scheduler.
-- Deterministic token-bucket rate limiter to prepare per-session relay limits.
-- Optional cpal input capture controlled by the GUI companion via the native
-  game-tick bridge; microphone capture is disabled by default and stops on mute/off.
-- Bounded storage bridge for mic-enabled, mute, PTT mode/key-down, proximity range,
-  and a native backend status message read by the in-game GUI.
-- AudioFrame PCM16 payload codec with sample-rate and frame-length validation.
-- Unit tests for protocol, proximity, jitter-buffer, rate-limit, and PCM framing.
+- Bounded HVC1 packet framing: 14-byte header, maximum 1200-byte packet.
+- PCM16 mono frames of approximately 10 ms, validated sample rate/frame size.
+- Sequence/replay checks, bounded jitter/reorder structures and rate-limit helpers.
+- GUI companion: V opens the settings page; the Push-to-talk key defaults to C
+  and can be rebound in Options > Mods.
+- Explicit microphone opt-in, mute, PTT or basic energy-gate voice activation,
+  persistent settings and a native backend status indicator.
+- Native \`Game::tick\` hook reads the companion's official Horizon per-mod
+  storage files and starts/stops the optional cpal capture.
+- Authenticated client enrollment with unique bearer tokens, TLS-only transport,
+  bounded requests/responses, per-client rate limits and an in-memory room relay.
+- Native speaker output using cpal, bounded playback queue and time-slot mixing.
+- CI checks for the WASM UI guest, native audio-enabled Horizon build, mixin
+  fixture and relay binary-protocol tests.
 
-Audio frames are currently uncompressed PCM16. The native backend captures and
-drains frames locally but does not transmit them. See [the protocol specification](docs/protocol-v1.md)
-for exact fields and known limits.
+## Important limits
 
-## Remaining features
+This is an experimental prototype, not a verified release. PCM is uncompressed
+(no Opus), so a 48 kHz mono stream is about 96 kB/s of raw samples per speaker
+before HTTPS framing. The relay is **room-wide**, not proximity-aware: all
+clients with credentials for the same room can hear each other. The distance
+setting is saved, but live server-authoritative position filtering/spatial
+attenuation is not connected yet. Basic voice activation is an RMS threshold,
+not a robust speech detector. Audio device operation still needs real
+multiplayer/platform testing.
 
-- Authenticated, encrypted client/server transport and server-side relay.
-- Opus or another suitable voice codec; PCM16 is not bandwidth-efficient.
-- Audio playback, jitter-buffer playout, and distance-based spatial attenuation.
-- Pass only PTT-eligible frames to the network sender; implement voice activation only if supported.
-- Connection settings, peer state, disconnect handling and cross-platform microphone testing.
-- Keep capture opt-in, stop it on mute/off, and never transmit before authenticated session setup.
+The stock Horizon sandbox does not expose microphone capture or mod-owned
+sockets to \`.hmod\` code. The local native source-mixin supplies capture and
+networking; installing the GUI companion alone is not enough. The Java
+Simple Voice Chat jar cannot be loaded directly.
 
-## Important architecture note
+## Build and test
 
-Horizon is a Rust rewrite with its own mod API. The Java jar from Simple Voice
-Chat cannot be loaded directly. The pinned Horizon mod API still lacks
-mod-facing sockets and microphone capture, so this repository adds a native
-source-mixin bridge for local capture. Authenticated encrypted networking and
-the server relay remain separate milestones. See [the port roadmap](docs/VOICE_CHAT_PORT.md).
+The native mixin follows the pinned \`horizon-mixins\` source-mixin path. See
+[\`compatibility.json\`](compatibility.json) for exact revisions. Build/check the
+native audio-enabled Horizon tree with:
 
-## In-game GUI companion
+\`\`\`sh
+python3 tools/horizon.py check --horizon ../horizon --audio --target-dir target/horizon-audio-cargo
+\`\`\`
 
-The `ui-companion/` directory is a separate sandboxed Horizon `.hmod`
-component built against the exact pinned Horizon SDK revision. It adds:
-- A V-key menu, rebindable in Options > Mods.
-- In-game controls for microphone enabled, mute, push-to-talk mode and a
-  proximity-range preference.
-- A compact top-right microphone status indicator.
-- Persistent settings through the mod storage capability.
+Build the standalone Horizon GUI companion from \`ui-companion/\`:
 
-Build it with the Horizon authoring tool from the companion directory:
-`cd ui-companion && cargo horizon-mod build`. The resulting `.hmod` is
-installed through Horizon's normal mod folder/manager. This UI component is
-separate from the native source-mixin executable.
+\`\`\`sh
+cd ui-companion
+cargo horizon-mod build
+\`\`\`
 
-**Current integration:** the native source-mixin now polls the UI companion's
-official per-mod storage folder and starts/stops the cpal microphone on the
-explicit microphone-enabled/mute controls. The GUI reads native status back
-from the same folder, and the PTT key state reaches the native gate. This
-storage bridge only exists in the native-mixin build; the sandboxed `.hmod`
-still has no direct microphone or socket access. Captured audio remains local-only
-until an authenticated encrypted transport and server relay are implemented.
+Install the resulting \`.hmod\` using Horizon's normal mod manager/folder. The
+companion requires the native source-mixin executable for actual microphone
+capture, transport and playback.
 
-## Native scaffold
+## Configure a relay
 
-This repository follows the horizon-mixins source-mixin path and builds a
-custom Horizon executable; it is not an ordinary jar or sandboxed hmod mod.
-The inherited block-break hook is still a temporary smoke test, while the new
-Game::tick hook drives the native settings bridge and microphone capture.
-Requirements and pinned source revisions are documented in compatibility.json.
+See [\`docs/RELAY.md\`](docs/RELAY.md) for TLS certificate requirements,
+client-token allow-list setup and the required client environment variables.
+The server is a separate process. Without relay configuration, microphone
+capture remains local-only. Mic defaults to off; enable it in the V menu and
+hold C while speaking when Push-to-talk is selected.
 
-## Build and validate
+## Design notes
 
-Run cargo fetch --locked, cargo test --workspace --locked --offline,
-cargo fmt --all --check, and python3 tools/test_template.py on a Linux
-development machine with the pinned horizon-mixins checkout available.
+- [Protocol framing](docs/protocol-v1.md): the internal packet envelope and PCM format.
+- [Native bridge](docs/NATIVE_BRIDGE.md): GUI storage, native capture and playback flow.
+- [Port roadmap](docs/VOICE_CHAT_PORT.md): remaining proximity, codec and integration gaps.
 
-GitHub Actions passed formatting, Clippy, Rust tests and the native-mixin
-fixture for this foundation. Those checks do not prove that audio or voice
-networking works; full native/gameplay and microphone tests remain pending.
-
-## Reference
-
-- [Simple Voice Chat](https://github.com/henkelmax/simple-voice-chat)
-- [Horizon](https://github.com/horizon-rust/horizon)
-- [Horizon Mixins](https://github.com/horizon-rust/horizon-mixins)
-
-License: MIT (see LICENSE).
+License: MIT.
