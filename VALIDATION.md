@@ -1,28 +1,30 @@
 # Validation
 
-## Current voice-chat branch
+## Automated checks
 
-The protocol framing implementation and its Rust unit tests have been added, but
-they have **not been compiled or run in this environment** because Rust/Cargo is
-not installed here. The CI workflow should validate formatting, Clippy, Cargo
-tests, and the native-mixin fixture after this branch is pushed.
+GitHub Actions passed for the voice-chat foundation on 2026-10-29:
+[workflow run 40889070675](https://github.com/Knaaaaaf/horizon-voice-chat/actions/runs/40889070675),
+associated with branch commit 209c5c66fe5c0aa0ceb2fecf44256cbfd66fc84f.
 
-Pending checks for this revision:
+- `cargo fmt --all --check` — passed.
+- `cargo clippy --workspace --all-targets --locked --offline -- -D warnings` — passed.
+- `cargo test --workspace --locked --offline` — passed.
+- `python3 tools/test_template.py` — passed; the actual mixin bundle compiled in
+  the tiny fixture, the original method/result stayed intact, and source-audit
+  plus deterministic-staging checks passed.
 
-- `cargo fmt --all --check`
-- `cargo clippy --workspace --all-targets --locked --offline -- -D warnings`
-- `cargo test --workspace --locked --offline`
-- `python3 tools/test_template.py`
-- `python3 tools/test_stage.py --horizon ../horizon`
-- Native Horizon `check` and `test` using the pinned Horizon checkout.
+These checks ran on a GitHub-hosted Linux runner with Rust 1.95.0. They verify
+the standalone packet/proximity helpers and the native-mixin staging fixture;
+they are not a gameplay or audio integration test.
 
-## Scope of validation
+## Still unverified
 
-The tiny native-mixin fixture tests that the injected Rust runtime compiles and
-that the original method body/result are preserved. It does not provide
-microphone capture, voice audio playback, an authenticated transport, a server
-relay, or multiplayer end-to-end evidence.
+- Full build/check/test against the complete pinned Horizon source export.
+- Microphone capture, audio playback, codec integration, real UDP transport,
+  authenticated sessions, server relay, and proximity filtering in multiplayer.
+- Compatibility on Windows/macOS or with a live Minecraft server.
 
-The template's earlier validation results applied to the inherited example
-mod before voice protocol changes. Do not treat those historical results as
-validation of this branch or as proof that voice chat works.
+The pinned Horizon mod API still lacks a mod-facing microphone capture
+interface and a client/server networking channel for mod halves. The code in
+this repository is a tested protocol/geometry foundation, **not a functional
+voice-chat mod yet**.
