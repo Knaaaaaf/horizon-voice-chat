@@ -141,6 +141,94 @@ pub mod voice_protocol {
     }
 }
 
+pub mod jitter_buffer {
+    use std::collections::BTreeMap;
+
+    use super::voice_protocol::Packet;
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub enum PushError {
+        ZeroCapacity,
+        TooFarAhead,
+        Stale,
+        Duplicate,
+        Full,
+    }
+
+    /// A bounded, sequence-ordered packet buffer for a future audio playout loop.
+    ///
+    /// The caller chooses the first expected sequence and decides when a missing
+    /// packet has waited long enough; this type deliberately has no hidden clock.
+    pub struct JitterBuffer {
+        next_sequence: u32,
+        capacity: usize,
+        pending: BTreeMap<u32, Packet>,
+    }
+
+    impl JitterBuffer {
+        pub fn new(first_sequence: u32, capacity: usize) -> Result<Self, PushError> {
+            if capacity == 0 {
+                return Err(PushError::ZeroCapacity);
+            }
+            Ok(Self {
+                next_sequence: first_sequence,
+                capacity,
+                pending: BTreeMap::new(),
+            })
+        }
+
+        pub fn push(&mut self, packet: Packet) -> Result<(), PushError> {
+            let distance = packet.sequence.wrapping_sub(self.next_sequence);
+            if distance >= 0x8000_0000 {
+                return Err(PushError::Stale);
+            }
+            if distance >= self.capacity as u32 {
+                return Err(PushError::TooFarAhead);
+            }
+            if self.pending.contains_key(&packet.sequence) {
+                return Err(PushError::Duplicate);
+            }
+            if self.pending.len() >= self.capacity {
+                return Err(PushError::Full);
+            }
+            self.pending.insert(packet.sequence, packet);
+            Ok(())
+        }
+
+        /// Returns only the next expected packet. Missing frames do not advance
+        /// the cursor automatically; the playout scheduler must choose when to
+        /// call skip_missing after its deadline.
+        pub fn pop_next(&mut self) -> Option<Packet> {
+            let packet = self.pending.remove(&self.next_sequence)?;
+            self.next_sequence = self.next_sequence.wrapping_add(1);
+            Some(packet)
+        }
+
+        /// Explicitly abandon missing sequence numbers until target_sequence.
+        /// This should only be called by a playout scheduler after its deadline.
+        pub fn skip_missing(&mut self, target_sequence: u32) -> bool {
+            let distance = target_sequence.wrapping_sub(self.next_sequence);
+            if distance == 0 || distance >= 0x8000_0000 {
+                return false;
+            }
+            self.next_sequence = target_sequence;
+            true
+        }
+
+        pub fn len(&self) -> usize {
+            self.pending.len()
+        }
+
+        pub fn is_empty(&self) -> bool {
+            self.pending.is_empty()
+        }
+
+        pub fn next_sequence(&self) -> u32 {
+            self.next_sequence
+        }
+    }
+}
+
 pub mod proximity {
     /// True when a listener is within the speaker's 3D voice radius.
     ///
@@ -200,6 +288,7 @@ pub fn before_break(pos: [i32; 3]) {
 
 #[cfg(test)]
 mod tests {
+    use super::jitter_buffer::{JitterBuffer, PushError};
     use super::proximity::{eligible_recipients, within_range};
     use super::voice_protocol::{
         CodecError, HEADER_LEN, MAX_DATAGRAM_BYTES, MAX_PAYLOAD_BYTES, Packet, PacketKind,
@@ -320,5 +409,49 @@ mod tests {
             eligible_recipients("speaker", [0.0, 0.0, 0.0], &candidates, 5.0),
             vec!["near", "edge"]
         );
+    }
+
+    fn audio_packet(sequence: u32) -> Packet {
+        Packet {
+            kind: PacketKind::AudioFrame,
+            sequence,
+            payload: vec![sequence as u8],
+        }
+    }
+
+    #[test]
+    fn jitter_buffer_reorders_frames_and_handles_sequence_wraparound() {
+        let mut buffer = JitterBuffer::new(u32::MAX, 4).unwrap();
+        buffer.push(audio_packet(0)).unwrap();
+        buffer.push(audio_packet(u32::MAX)).unwrap();
+        assert_eq!(buffer.pop_next().unwrap().sequence, u32::MAX);
+        assert_eq!(buffer.pop_next().unwrap().sequence, 0);
+        assert!(buffer.is_empty());
+    }
+
+    #[test]
+    fn jitter_buffer_is_bounded_and_rejects_stale_duplicate_and_distant_frames() {
+        let mut buffer = JitterBuffer::new(10, 2).unwrap();
+        assert_eq!(buffer.push(audio_packet(12)), Err(PushError::TooFarAhead));
+        buffer.push(audio_packet(11)).unwrap();
+        assert_eq!(buffer.push(audio_packet(11)), Err(PushError::Duplicate));
+        assert_eq!(buffer.push(audio_packet(9)), Err(PushError::Stale));
+        buffer.push(audio_packet(10)).unwrap();
+        assert_eq!(buffer.push(audio_packet(10)), Err(PushError::Duplicate));
+        assert_eq!(buffer.len(), 2);
+        assert_eq!(buffer.pop_next().unwrap().sequence, 10);
+        assert_eq!(buffer.pop_next().unwrap().sequence, 11);
+        assert_eq!(buffer.pop_next(), None);
+    }
+
+    #[test]
+    fn jitter_buffer_requires_nonzero_capacity_and_can_skip_lost_frames() {
+        assert!(matches!(JitterBuffer::new(1, 0), Err(PushError::ZeroCapacity)));
+        let mut buffer = JitterBuffer::new(5, 4).unwrap();
+        buffer.push(audio_packet(7)).unwrap();
+        assert!(buffer.skip_missing(7));
+        assert_eq!(buffer.pop_next().unwrap().sequence, 7);
+        assert!(!buffer.skip_missing(7));
+        assert!(!buffer.skip_missing(6));
     }
 }
