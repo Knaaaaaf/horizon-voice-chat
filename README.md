@@ -63,12 +63,13 @@ Build it with the Horizon authoring tool from the companion directory:
 installed through Horizon's normal mod folder/manager. This UI component is
 separate from the native source-mixin executable.
 
-**Important limitation:** these controls are currently UI/state only. The
-pinned Horizon 0.1 sandbox API has no microphone-capture or mod-owned
-client/server networking capability, so toggling the microphone here does not
-yet start the native cpal capture stream or send voice. The UI is an actual
-Horizon screen/settings page, but end-to-end voice chat still needs a host
-bridge and server relay.
+**Current integration:** the native source-mixin now polls the UI companion's
+official per-mod storage folder and starts/stops the cpal microphone on the
+explicit microphone-enabled/mute controls. The GUI reads native status back
+from the same folder, and the PTT key state reaches the native gate. This
+storage bridge only exists in the native-mixin build; the sandboxed `.hmod`
+still has no direct microphone or socket access. Captured audio remains local-only
+until an authenticated encrypted transport and server relay are implemented.
 
 ## Native scaffold
 
