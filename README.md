@@ -44,6 +44,28 @@ mod-facing client/server networking channel and microphone capture interface.
 Those integration points must be implemented upstream or made available before
 a working port can be completed. See [the port roadmap](docs/VOICE_CHAT_PORT.md).
 
+## In-game GUI companion
+
+The `ui-companion/` directory is a separate sandboxed Horizon `.hmod`
+component built against the exact pinned Horizon SDK revision. It adds:
+- A V-key menu, rebindable in Options > Mods.
+- In-game controls for microphone enabled, mute, push-to-talk mode and a
+  proximity-range preference.
+- A compact top-right microphone status indicator.
+- Persistent settings through the mod storage capability.
+
+Build it with the Horizon authoring tool from the companion directory:
+`cd ui-companion && cargo horizon-mod build`. The resulting `.hmod` is
+installed through Horizon's normal mod folder/manager. This UI component is
+separate from the native source-mixin executable.
+
+**Important limitation:** these controls are currently UI/state only. The
+pinned Horizon 0.1 sandbox API has no microphone-capture or mod-owned
+client/server networking capability, so toggling the microphone here does not
+yet start the native cpal capture stream or send voice. The UI is an actual
+Horizon screen/settings page, but end-to-end voice chat still needs a host
+bridge and server relay.
+
 ## Native scaffold
 
 This repository follows the horizon-mixins source-mixin path and builds a
