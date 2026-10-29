@@ -20,8 +20,10 @@ A native Rust voice-chat port for Horizon, inspired by
 - Bounded reorder buffer for late/out-of-order frames, with explicit missing-frame
   skipping controlled by a future playout scheduler.
 - Deterministic token-bucket rate limiter to prepare per-session relay limits.
-- Optional cpal input capture, started only when explicitly invoked, with
-  non-blocking ~10 ms mono PCM16 frame assembly and bounded queue backpressure.
+- Optional cpal input capture controlled by the GUI companion via the native
+  game-tick bridge; microphone capture is disabled by default and stops on mute/off.
+- Bounded storage bridge for mic-enabled, mute, PTT mode/key-down, proximity range,
+  and a native backend status message read by the in-game GUI.
 - AudioFrame PCM16 payload codec with sample-rate and frame-length validation.
 - Unit tests for protocol, proximity, jitter-buffer, rate-limit, and PCM framing.
 
