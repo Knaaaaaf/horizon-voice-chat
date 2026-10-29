@@ -59,7 +59,8 @@ voice.
 ## Tests
 
 The Rust tests cover round-trip serialization, exact maximum packet size,
-oversized payload rejection, malformed header/length rejection, and sequence
-duplicate/stale/wraparound behavior and proximity boundary/invalid-input
-handling. They have been added to source but have **not yet been run for this
-latest change** in this environment because the Rust toolchain is not available here.
+oversized payload rejection, malformed header/length rejection, sequence
+handling, proximity boundary/invalid-input handling, jitter-buffer ordering and
+loss skips, and token-bucket capacity/refill behavior. GitHub Actions has passed
+formatting, Clippy, and Cargo tests for the latest token-bucket revision; the
+native-mixin fixture is still running.
