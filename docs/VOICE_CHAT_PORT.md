@@ -2,62 +2,64 @@
 
 ## Status
 
-This is a planning/scaffolding stage, not an implemented voice-chat system.
-The repository currently contains the native-mixin example's block-break hook.
-There is no microphone capture, audio codec pipeline, voice packet transport,
-spatial playback, or voice server integration yet.
+The repository now contains a first, testable protocol primitive: a bounded
+14-byte packet header codec and a per-session sequence guard in the runtime.
+Tests cover round trips, size limits, malformed headers and sequence
+replay/staleness. The tests are committed but have not yet been run in this
+environment because Rust/Cargo is not installed here.
 
-The Horizon project has documented the main prerequisites for a proximity voice
-mod: server-side mod support, mod networking, and an audio interface exposed to
-mods. These must be verified against the exact Horizon revision before coding
-against them. Do not substitute guessed APIs or unsafe source-text rewriting.
+This is still **not a working voice-chat mod**. It has no microphone capture,
+Opus pipeline, network socket, authentication/encryption, audio playback,
+spatial sound integration, or server relay. The inherited block-break hook is
+only a native-mixin staging smoke test.
+
+## Horizon API blockers
+
+The repository's pinned Horizon revision is
+028f60881678a9a0e3e198f693a82858fa475c76. Its own
+[mod API documentation](https://github.com/horizon-rust/horizon/blob/028f60881678a9a0e3e198f693a82858fa475c76/docs/api/mods.md)
+lists client APIs for game state, chat, HUD and storage, and experimental server
+mods. It explicitly lists a client/server channel for a mod's two halves as work
+that is still needed. It exposes no mod-facing microphone capture interface.
+A Java Simple Voice Chat jar cannot be loaded by Horizon.
+
+These gaps must be solved or supported by upstream APIs before a playable
+end-to-end port can be claimed. Avoid guessing API names or using text-rewrite
+patches around the Rust source.
 
 ## Intended architecture
 
 1. **Client audio adapter** — request microphone access only after explicit
    user input; capture frames; support push-to-talk and mute; stop capture when
    disconnected or disabled.
-2. **Codec and frame pipeline** — encode voice frames using a codec supported by
-   the available Horizon build; bound frame sizes and queues; handle packet loss
-   without unbounded buffering.
-3. **Versioned transport** — define a protocol version, frame type, sequence
-   number, bounded payload length, and authenticated player/session identity.
-   Never trust a client-provided player position or identity.
-4. **Server relay** — validate membership and packet sizes, rate-limit senders,
-   and relay only to eligible nearby players. Keep voice transport separate from
-   Minecraft's ordinary chat messages.
-5. **Spatial playback** — derive distance and direction from authoritative game
-   state; apply attenuation and stop playback when a player leaves range.
+2. **Codec and frame pipeline** — pick an available, compatible codec; bound
+   frame sizes and queues; handle packet loss without unbounded buffering.
+3. **Authenticated transport** — negotiate protocol and codec; bind packets to
+   a verified player/session identity; apply timeouts and replay protection.
+4. **Server relay** — validate packet sizes, rate-limit senders, and relay only
+   to eligible nearby players using server-authoritative positions.
+5. **Spatial playback** — derive distance and direction from game state; apply
+   attenuation and stop playback when a player leaves range.
 6. **Settings and diagnostics** — server address/port, push-to-talk binding,
    mute controls, connection state, and non-sensitive error logs.
 
-## Compatibility gates
+## Implemented packet framing
 
-Before the first end-to-end prototype, confirm all of the following against a
-pinned Horizon revision:
-
-- A supported client audio capture and playback API is available to mods.
-- A supported way to send/receive mod packets exists on the client.
-- The server can load compatible mod logic and relay voice data.
-- The client can access authoritative player identity, positions, and lifecycle.
-- The chosen codec and its licensing/build requirements are compatible with the
-  target platforms.
-
-If any gate is missing, the next step is upstream API work or a clearly labelled
-prototype, not claiming a functional voice-chat port.
+See [protocol-v1.md](protocol-v1.md) for the experimental packet layout and its
+limits. The header codec is deliberately independent of any socket, audio
+backend or Horizon game hook, so it can be unit-tested in isolation. It is not
+Simple Voice Chat wire-compatible and must not be treated as secure networking.
 
 ## Suggested milestones
 
-- [ ] M1 — verify audio, networking, and server mod APIs for a pinned revision.
-- [ ] M2 — implement and unit-test a versioned, bounded voice-frame format.
-- [ ] M3 — establish a two-client server relay with no audio playback yet.
+- [x] M1a — add bounded packet framing and sequence-guard logic with unit tests.
+- [ ] M1b — run Rust tests/Clippy and verify the native staging fixture.
+- [ ] M2 — confirm supported client microphone/playback and mod-network APIs.
+- [ ] M3 — establish a versioned, authenticated two-client relay on a test server.
 - [ ] M4 — add microphone capture, push-to-talk, codec, and playback.
 - [ ] M5 — add proximity filtering and spatial attenuation.
 - [ ] M6 — test disconnects, malformed packets, rate limits, mute/privacy, and
       supported operating systems.
 
-## Reference implementation
-
-[Simple Voice Chat](https://github.com/henkelmax/simple-voice-chat) is a
-reference for user-facing features and protocol behavior, not a drop-in Rust
-dependency. Its Java/Fabric/Forge integration cannot be loaded by Horizon.
+A complete port also needs a server component; a client-only implementation
+cannot make players hear one another on a remote server.
