@@ -30,7 +30,7 @@ MAX_RESPONSE_FRAMES = 256
 MAX_RESPONSE_BYTES = 512 * 1024
 ROOM_HISTORY_FRAMES = 2048
 ROOM_HISTORY_SECONDS = 4.0
-MAX_ROOM_CLIENTS = 32
+MAX_ROOM_CLIENTS = 16
 MAX_PACKETS_PER_SECOND = 125
 MAX_BYTES_PER_SECOND = 128_000
 MAX_GETS_PER_SECOND = 40
@@ -85,6 +85,7 @@ def parse_clients(raw: str) -> dict[str, ClientCredential]:
     if not isinstance(value, dict) or not value:
         raise ValueError("HVC_RELAY_CLIENTS must be a non-empty JSON object")
     clients: dict[str, ClientCredential] = {}
+    seen_tokens: list[str] = []
     for client_id, item in value.items():
         if not isinstance(client_id, str) or not safe_id(client_id):
             raise ValueError("client IDs must use 1–64 ASCII letters, digits, '.', '_' or '-'")
@@ -94,12 +95,15 @@ def parse_clients(raw: str) -> dict[str, ClientCredential]:
         rooms = item.get("rooms")
         if not isinstance(token, str) or not TOKEN_RE.fullmatch(token):
             raise ValueError(f"token for {client_id!r} must be at least 32 non-whitespace characters")
+        if any(hmac.compare_digest(token, previous) for previous in seen_tokens):
+            raise ValueError("each configured client must have a unique relay token")
         if (
             not isinstance(rooms, list)
             or not rooms
             or any(not isinstance(room, str) or not safe_id(room) for room in rooms)
         ):
             raise ValueError(f"rooms for {client_id!r} must be a list of valid room IDs")
+        seen_tokens.append(token)
         clients[client_id] = ClientCredential(token, frozenset(rooms))
     return clients
 
