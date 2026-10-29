@@ -14,7 +14,10 @@ A native Rust voice-chat port for Horizon, inspired by
 - Validation for magic, version, packet kind, reserved flags and payload size.
 - Monotonic per-session sequence guard with duplicate/stale rejection and
   u32 wraparound handling.
-- Unit tests for round trips, malformed input, boundaries and sequence handling.
+- Pure 3D proximity filtering that excludes the speaker and rejects invalid
+  coordinates/ranges.
+- Unit tests for round trips, malformed input, boundaries, sequence handling
+  and proximity selection.
 
 See [the protocol specification](docs/protocol-v1.md) for exact fields and
 known security/compatibility limits.
