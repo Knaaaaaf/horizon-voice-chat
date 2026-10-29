@@ -27,9 +27,9 @@ A native Rust voice-chat port for Horizon, inspired by
 - AudioFrame PCM16 payload codec with sample-rate and frame-length validation.
 - Unit tests for protocol, proximity, jitter-buffer, rate-limit, and PCM framing.
 
-Audio frames are currently uncompressed PCM16, so bandwidth use is high and the
-capture backend is not wired to an in-game control or transport. See [the
-protocol specification](docs/protocol-v1.md) for exact fields and known limits.
+Audio frames are currently uncompressed PCM16. The native backend captures and
+drains frames locally but does not transmit them. See [the protocol specification](docs/protocol-v1.md)
+for exact fields and known limits.
 
 ## Planned features
 
