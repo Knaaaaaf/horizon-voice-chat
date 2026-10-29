@@ -5,10 +5,12 @@
 The repository now has three pure Rust building blocks:
 - A bounded 14-byte packet framing codec with strict header/length validation.
 - A per-session sequence guard that rejects duplicates and stale sequence numbers.
-- A bounded jitter/reorder buffer plus 3D proximity recipient selection.
+- A bounded jitter/reorder buffer, 3D proximity recipient selection, and a
+  deterministic token bucket for per-session rate limits.
 
 The tests cover serialization boundaries, malformed input, sequence wraparound,
-out-of-order delivery, buffer bounds, missing-frame skips, and invalid positions.
+out-of-order delivery, buffer bounds, missing-frame skips, invalid positions,
+and token-bucket exhaustion/refill behavior.
 GitHub Actions has passed formatting, Clippy, unit tests, and the native-mixin
 fixture for the prior foundation commit; this latest jitter-buffer change is
 waiting for its own CI run.
@@ -60,6 +62,7 @@ or send/relay any packets. None of these components is a secure transport.
 - [x] M1a — bounded packet framing and sequence guard.
 - [x] M1b — pure 3D proximity selection.
 - [x] M1c — bounded reordering buffer and explicit missing-frame skip.
+- [x] M1d — deterministic token-bucket helper for per-session rate limits.
 - [x] CI — formatting, Clippy, Rust unit tests and native-mixin fixture passed
       for the foundation revision.
 - [ ] M2 — confirm supported client microphone/playback and mod-network APIs.
