@@ -31,7 +31,7 @@ def main():
     run(['cargo', 'build', '--locked', '--offline', '-p', 'horizon-mixins-cli'], cwd=horizon.MIXINS)
     cli = horizon.MIXINS/'target/debug/horizon-mixins'
     manifests = list((root/'mixins').glob('*/horizon-mixin.toml'))
-    assert len(manifests) == 1, 'this template test expects one example bundle'
+    assert len(manifests) == 1, 'the voice-chat scaffold expects one native mixin bundle'
     manifest = tomllib.loads(manifests[0].read_text())
     with tempfile.TemporaryDirectory(prefix='template-test-', dir=root/'target') as scratch:
         scratch = Path(scratch)
@@ -60,7 +60,7 @@ impl Game<'_> {
         base = ['--workspace', str(original), '--mods', str(root/'mixins')]
         report = json.loads(run([str(cli), 'check', *base, '--out', str(stage), '--trust-native-mods']).stdout)
         assert report['injections'] == 1 and report['modules'] == 1
-        assert '2 passed' in report['cargo_stdout']
+        assert '6 passed' in report['cargo_stdout']
         first = snapshot(stage)
         second = json.loads(run([str(cli), 'check', *base, '--out', str(stage), '--trust-native-mods']).stdout)
         assert not second['stage_changed'] and snapshot(stage) == first
