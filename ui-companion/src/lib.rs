@@ -1,9 +1,9 @@
 //! In-game UI companion for Horizon Voice Chat.
 //!
-//! This is deliberately a UI/settings component. The pinned Horizon 0.1 API
-//! does not expose microphone capture or a client/server custom network
-//! channel to sandboxed mods, so these controls do not yet start the native
-//! cpal backend or transmit voice.
+//! The GUI uses Horizon's sandbox-safe storage capability as a narrow control
+//! plane. A native Game::tick mixin reads the companion's own storage directory
+//! and starts/stops cpal capture only after explicit microphone opt-in. Voice
+//! frames are still local-only: encrypted transport and server relay are pending.
 
 use horizon_mod_sdk::{
     Mod, Registration, input,
