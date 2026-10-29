@@ -661,6 +661,335 @@ pub mod proximity {
     }
 }
 
+
+/// Polls the GUI companion's persisted settings and controls the native microphone.
+///
+/// Horizon's current WASM mod API intentionally has no direct microphone or
+/// socket capability. The native mixin therefore bridges only the companion's
+/// own storage folder. The folder is discovered beside the installed
+/// `horizon-mods` folder, or can be set explicitly with
+/// `HORIZON_VOICE_CHAT_SETTINGS_DIR` / `HORIZON_VOICE_CHAT_MODS_DIR`.
+pub mod native_bridge {
+    use std::fs;
+    use std::path::{Path, PathBuf};
+
+    const UI_MOD_ID: &str = "horizon_voice_chat_ui";
+    const STORAGE_DIR: &str = ".horizon-mod-data";
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub struct Settings {
+        pub microphone_enabled: bool,
+        pub muted: bool,
+        pub push_to_talk: bool,
+        pub ptt_down: bool,
+        /// Actual proximity distance in blocks, not the companion's list index.
+        pub proximity_blocks: u32,
+    }
+
+    impl Default for Settings {
+        fn default() -> Self {
+            Self {
+                microphone_enabled: false,
+                muted: false,
+                push_to_talk: true,
+                ptt_down: false,
+                proximity_blocks: 16,
+            }
+        }
+    }
+
+    fn read_text(dir: &Path, key: &str) -> Option<String> {
+        fs::read_to_string(dir.join(key)).ok()
+    }
+
+    fn read_bool(dir: &Path, key: &str, default: bool) -> bool {
+        read_text(dir, key)
+            .map(|value| value.trim().eq_ignore_ascii_case("true"))
+            .unwrap_or(default)
+    }
+
+    pub fn read_settings_at(dir: &Path) -> Settings {
+        let distance_index = read_text(dir, "distance")
+            .and_then(|value| value.trim().parse::<usize>().ok())
+            .filter(|index| *index < 4)
+            .unwrap_or(1);
+
+        Settings {
+            microphone_enabled: read_bool(dir, "mic_enabled", false),
+            muted: read_bool(dir, "muted", false),
+            push_to_talk: read_bool(dir, "ptt", true),
+            // A held key must never survive a game restart or a missed key-up.
+            ptt_down: read_bool(dir, "ptt_down", false),
+            proximity_blocks: [8, 16, 32, 48][distance_index],
+        }
+    }
+
+    /// Microphone frames may leave the client only when this gate is open.
+    /// The network sender is intentionally not connected yet.
+    pub fn transmit_allowed(settings: &Settings) -> bool {
+        settings.microphone_enabled
+            && !settings.muted
+            && (!settings.push_to_talk || settings.ptt_down)
+    }
+
+    fn mods_dir_from_env() -> Option<PathBuf> {
+        std::env::var_os("HORIZON_VOICE_CHAT_MODS_DIR").map(PathBuf::from)
+    }
+
+    fn settings_dir_from_env() -> Option<PathBuf> {
+        std::env::var_os("HORIZON_VOICE_CHAT_SETTINGS_DIR").map(PathBuf::from)
+    }
+
+    fn candidate_roots() -> Vec<PathBuf> {
+        let mut roots = Vec::new();
+        if let Ok(cwd) = std::env::current_dir() {
+            roots.extend(cwd.ancestors().take(5).map(Path::to_path_buf));
+        }
+        if let Ok(exe) = std::env::current_exe() {
+            if let Some(parent) = exe.parent() {
+                roots.extend(parent.ancestors().take(5).map(Path::to_path_buf));
+            }
+        }
+        roots.sort();
+        roots.dedup();
+        roots
+    }
+
+    /// Finds Horizon's documented `horizon-mods/.horizon-mod-data/<mod-id>`
+    /// folder. The exact settings path environment variable takes precedence.
+    pub fn settings_directory() -> Option<PathBuf> {
+        if let Some(path) = settings_dir_from_env() {
+            return Some(path);
+        }
+        if let Some(path) = mods_dir_from_env() {
+            return Some(path.join(STORAGE_DIR).join(UI_MOD_ID));
+        }
+        for root in candidate_roots() {
+            if root.file_name().is_some_and(|name| name == "horizon-mods") && root.is_dir() {
+                return Some(root.join(STORAGE_DIR).join(UI_MOD_ID));
+            }
+            let mods = root.join("horizon-mods");
+            if mods.is_dir() {
+                return Some(mods.join(STORAGE_DIR).join(UI_MOD_ID));
+            }
+        }
+        None
+    }
+
+    fn publish_status(dir: &Path, status: &str) {
+        let path = dir.join("backend_status");
+        if fs::read_to_string(&path).ok().as_deref() == Some(status) {
+            return;
+        }
+        if fs::create_dir_all(dir).is_ok() {
+            let _ = fs::write(path, status.as_bytes());
+        }
+    }
+
+    #[cfg(feature = "audio")]
+    struct AudioRuntime {
+        capture: Option<super::microphone::MicrophoneCapture>,
+        receiver: Option<std::sync::mpsc::Receiver<Vec<i16>>>,
+        attempted: bool,
+        last_error: Option<String>,
+    }
+
+    #[cfg(feature = "audio")]
+    impl Default for AudioRuntime {
+        fn default() -> Self {
+            Self {
+                capture: None,
+                receiver: None,
+                attempted: false,
+                last_error: None,
+            }
+        }
+    }
+
+    #[cfg(feature = "audio")]
+    impl AudioRuntime {
+        fn update(&mut self, settings: &Settings) -> String {
+            let requested = settings.microphone_enabled && !settings.muted;
+            if !requested {
+                self.capture = None;
+                self.receiver = None;
+                self.attempted = false;
+                self.last_error = None;
+                return if settings.microphone_enabled && settings.muted {
+                    "Muted — native microphone stopped".into()
+                } else {
+                    "Microphone off".into()
+                };
+            }
+
+            // Only attempt to open the OS device once per enable cycle. A
+            // failure remains visible until the user disables/enables the mic.
+            if self.capture.is_none() && !self.attempted {
+                self.attempted = true;
+                let (sender, receiver) = std::sync::mpsc::sync_channel(16);
+                match super::microphone::MicrophoneCapture::start(sender) {
+                    Ok(capture) => {
+                        self.capture = Some(capture);
+                        self.receiver = Some(receiver);
+                        self.last_error = None;
+                    }
+                    Err(error) => self.last_error = Some(format!("{error:?}")),
+                }
+            }
+
+            if let Some(receiver) = &self.receiver {
+                // The local capture is real, but no network sender is wired up.
+                // Drain bounded PCM frames so the device callback never backs up.
+                while receiver.try_recv().is_ok() {}
+            }
+
+            if self.capture.is_none() {
+                return format!(
+                    "Microphone error — {}",
+                    self.last_error.as_deref().unwrap_or("capture did not start")
+                );
+            }
+            if settings.push_to_talk {
+                if transmit_allowed(settings) {
+                    "Capturing locally — PTT held; server relay offline".into()
+                } else {
+                    "Capturing locally — PTT released; server relay offline".into()
+                }
+            } else {
+                "Capturing locally — server relay offline".into()
+            }
+        }
+    }
+
+    #[derive(Default)]
+    struct Runtime {
+        ticks: u64,
+        settings_dir: Option<PathBuf>,
+        settings: Settings,
+        #[cfg(feature = "audio")]
+        audio: AudioRuntime,
+    }
+
+    impl Runtime {
+        fn tick(&mut self) {
+            self.ticks = self.ticks.wrapping_add(1);
+
+            // 20 game ticks/s: poll the files twice per second, not on every
+            // frame, while still discovering the profile directory on startup.
+            if self.settings_dir.is_none() || self.ticks % 10 == 1 {
+                if let Some(dir) = settings_directory() {
+                    self.settings = read_settings_at(&dir);
+                    self.settings_dir = Some(dir);
+                }
+            }
+
+            let status = self.backend_status();
+            if let Some(dir) = &self.settings_dir {
+                publish_status(dir, &status);
+            }
+        }
+
+        fn backend_status(&mut self) -> String {
+            #[cfg(feature = "audio")]
+            {
+                self.audio.update(&self.settings)
+            }
+            #[cfg(not(feature = "audio"))]
+            {
+                if self.settings.microphone_enabled && !self.settings.muted {
+                    "Audio backend not built — rebuild Horizon with --audio".into()
+                } else if self.settings.microphone_enabled && self.settings.muted {
+                    "Muted — microphone disabled".into()
+                } else {
+                    "Microphone off".into()
+                }
+            }
+        }
+    }
+
+    std::thread_local! {
+        static RUNTIME: std::cell::RefCell<Runtime> =
+            std::cell::RefCell::new(Runtime::default());
+    }
+
+    /// Called on the game thread by the native Game::tick mixin hook.
+    pub fn tick() {
+        RUNTIME.with(|runtime| runtime.borrow_mut().tick());
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        fn temp_dir() -> PathBuf {
+            std::env::temp_dir().join(format!(
+                "horizon-voice-bridge-{}-{}",
+                std::process::id(),
+                SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+            ))
+        }
+
+        #[test]
+        fn defaults_are_privacy_safe_and_distance_is_bounded() {
+            let dir = temp_dir();
+            fs::create_dir_all(&dir).unwrap();
+            let settings = read_settings_at(&dir);
+            assert!(!settings.microphone_enabled);
+            assert!(!settings.muted);
+            assert!(settings.push_to_talk);
+            assert!(!settings.ptt_down);
+            assert_eq!(settings.proximity_blocks, 16);
+            fs::remove_dir_all(dir).unwrap();
+        }
+
+        #[test]
+        fn parses_companion_storage_and_ignores_bad_values() {
+            let dir = temp_dir();
+            fs::create_dir_all(&dir).unwrap();
+            fs::write(dir.join("mic_enabled"), b"true").unwrap();
+            fs::write(dir.join("muted"), b"false").unwrap();
+            fs::write(dir.join("ptt"), b"false").unwrap();
+            fs::write(dir.join("ptt_down"), b"true").unwrap();
+            fs::write(dir.join("distance"), b"3").unwrap();
+
+            let settings = read_settings_at(&dir);
+            assert!(settings.microphone_enabled);
+            assert!(!settings.muted);
+            assert!(!settings.push_to_talk);
+            assert!(settings.ptt_down);
+            assert_eq!(settings.proximity_blocks, 48);
+
+            fs::write(dir.join("distance"), b"900").unwrap();
+            assert_eq!(read_settings_at(&dir).proximity_blocks, 16);
+            fs::remove_dir_all(dir).unwrap();
+        }
+
+        #[test]
+        fn push_to_talk_and_mute_gate_transmission() {
+            let mut settings = Settings {
+                microphone_enabled: true,
+                muted: false,
+                push_to_talk: true,
+                ptt_down: false,
+                proximity_blocks: 16,
+            };
+            assert!(!transmit_allowed(&settings));
+            settings.ptt_down = true;
+            assert!(transmit_allowed(&settings));
+            settings.muted = true;
+            assert!(!transmit_allowed(&settings));
+            settings.muted = false;
+            settings.push_to_talk = false;
+            settings.ptt_down = false;
+            assert!(transmit_allowed(&settings));
+            settings.microphone_enabled = false;
+            assert!(!transmit_allowed(&settings));
+        }
+    }
+}
+
+
 // Temporary native hook used only to prove that the template still stages.
 // It does not capture or transmit voice audio.
 pub fn block_break_message(pos: [i32; 3]) -> String {
