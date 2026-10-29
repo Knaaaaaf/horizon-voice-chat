@@ -142,9 +142,9 @@ pub mod voice_protocol {
 }
 
 pub mod pcm_capture {
-    use std::sync::mpsc::{SyncSender, TrySendError};
-    use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::mpsc::{SyncSender, TrySendError};
 
     /// Converts interleaved device samples into bounded mono PCM frames.
     /// Frame duration is approximately 10 ms at the device's sample rate.
@@ -187,7 +187,8 @@ pub mod pcm_capture {
                     .map(|sample| i32::from(convert(*sample)))
                     .sum();
                 let mono = (sum / self.channels as i32)
-                    .clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as i16;
+                    .clamp(i32::from(i16::MIN), i32::from(i16::MAX))
+                    as i16;
                 self.pending.push(mono);
 
                 if self.pending.len() == self.frame_samples {
@@ -215,9 +216,7 @@ pub mod pcm_capture {
             let (sender, receiver) = sync_channel(4);
             let dropped = Arc::new(AtomicU64::new(0));
             let mut assembler = PcmFrameAssembler::new(2, 8_000, dropped.clone()).unwrap();
-            let interleaved: Vec<i16> = (0..160)
-                .flat_map(|_| [1_000_i16, 3_000_i16])
-                .collect();
+            let interleaved: Vec<i16> = (0..160).flat_map(|_| [1_000_i16, 3_000_i16]).collect();
             assembler.push(&interleaved, |sample| sample, &sender);
             let frame = receiver.try_recv().unwrap();
             assert_eq!(frame.len(), 80);
@@ -249,9 +248,9 @@ pub mod microphone {
     use super::pcm_capture::PcmFrameAssembler;
     use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
     use cpal::{Device, SampleFormat, Stream, StreamConfig};
+    use std::sync::Arc;
     use std::sync::atomic::AtomicU64;
     use std::sync::mpsc::SyncSender;
-    use std::sync::Arc;
     use std::time::Duration;
 
     #[derive(Debug)]
@@ -276,7 +275,9 @@ pub mod microphone {
     impl MicrophoneCapture {
         pub fn start(sender: SyncSender<Vec<i16>>) -> Result<Self, CaptureError> {
             let host = cpal::default_host();
-            let device = host.default_input_device().ok_or(CaptureError::NoInputDevice)?;
+            let device = host
+                .default_input_device()
+                .ok_or(CaptureError::NoInputDevice)?;
             let supported = device
                 .default_input_config()
                 .map_err(|error| CaptureError::DefaultConfig(error.to_string()))?;
@@ -286,7 +287,9 @@ pub mod microphone {
                 return Err(CaptureError::UnsupportedSampleRate(sample_rate));
             }
             if channels == 0 {
-                return Err(CaptureError::DefaultConfig("input has zero channels".into()));
+                return Err(CaptureError::DefaultConfig(
+                    "input has zero channels".into(),
+                ));
             }
 
             let config: StreamConfig = supported.clone().into();
@@ -319,13 +322,10 @@ pub mod microphone {
         }
 
         pub fn dropped_frames(&self) -> u64 {
-            self.dropped_frames.load(std::sync::atomic::Ordering::Relaxed)
+            self.dropped_frames
+                .load(std::sync::atomic::Ordering::Relaxed)
         }
 
-        pub fn is_running(&self) -> bool {
-            let _keep_stream_alive = &self.stream;
-            true
-        }
     }
 
     fn build_stream(
@@ -363,9 +363,9 @@ pub mod microphone {
                 (sample.clamp(-1.0, 1.0) * f32::from(i16::MAX)) as i16
             }),
             SampleFormat::I16 => stream!(i16, |sample: i16| sample),
-            SampleFormat::U16 => stream!(u16, |sample: u16| {
-                (i32::from(sample) - 32_768) as i16
-            }),
+            SampleFormat::U16 => {
+                stream!(u16, |sample: u16| { (i32::from(sample) - 32_768) as i16 })
+            }
             _ => Err(CaptureError::UnsupportedSampleFormat),
         }
     }
@@ -780,16 +780,14 @@ mod tests {
 
     #[test]
     fn pcm_frame_assembler_builds_mono_frames_from_interleaved_samples() {
+        use std::sync::Arc;
         use std::sync::atomic::AtomicU64;
         use std::sync::mpsc::sync_channel;
-        use std::sync::Arc;
 
         let (sender, receiver) = sync_channel(2);
         let dropped = Arc::new(AtomicU64::new(0));
         let mut assembler = PcmFrameAssembler::new(2, 8_000, dropped).unwrap();
-        let input: Vec<i16> = (0..160)
-            .flat_map(|_| [1_000_i16, 3_000_i16])
-            .collect();
+        let input: Vec<i16> = (0..160).flat_map(|_| [1_000_i16, 3_000_i16]).collect();
         assembler.push(&input, |sample| sample, &sender);
         let frame = receiver.try_recv().unwrap();
         assert_eq!(frame.len(), 80);
