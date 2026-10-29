@@ -80,7 +80,7 @@ pub mod voice_protocol {
             if bytes.len() > MAX_DATAGRAM_BYTES {
                 return Err(CodecError::TooLarge);
             }
-            if bytes[0..4] != MAGIC {
+            if &bytes[..4] != MAGIC.as_slice() {
                 return Err(CodecError::BadMagic);
             }
             if bytes[4] != VERSION {
@@ -208,7 +208,10 @@ mod tests {
         };
         let valid = packet.encode().unwrap();
 
-        assert_eq!(Packet::decode(&valid[..HEADER_LEN - 1]), Err(CodecError::TooShort));
+        assert_eq!(
+            Packet::decode(&valid[..HEADER_LEN - 1]),
+            Err(CodecError::TooShort)
+        );
 
         let mut bad_magic = valid.clone();
         bad_magic[0] ^= 1;
