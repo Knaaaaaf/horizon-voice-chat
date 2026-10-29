@@ -69,6 +69,15 @@ class RelayProtocolTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             server.parse_clients('{"alice":{"token":"' + token + '","rooms":["../world"]}}')
 
+    def test_each_client_must_have_a_distinct_token(self) -> None:
+        token = "Z" * 48
+        duplicated = (
+            '{"alice":{"token":"' + token + '","rooms":["survival"]},'
+            '"bob":{"token":"' + token + '","rooms":["survival"]}}'
+        )
+        with self.assertRaises(ValueError):
+            server.parse_clients(duplicated)
+
     def test_download_excludes_sender_but_advances_cursor(self) -> None:
         local = packet(0)
         remote = packet(0)
