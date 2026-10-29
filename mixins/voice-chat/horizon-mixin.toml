@@ -1,0 +1,22 @@
+[mod]
+id = "horizon-voice-chat"
+version = "0.1.0"
+priority = 100
+
+[compatibility]
+horizon_revision = "028f60881678a9a0e3e198f693a82858fa475c76"
+
+[[module]]
+id = "runtime"
+file = "crates/horizon-client/src/game.rs"
+name = "voice_chat"
+source = "runtime.rs"
+
+# Temporary smoke-test hook inherited from the native source-mixin template.
+# It proves the native module can be injected but is not part of voice chat.
+[[injection]]
+id = "dev-hook-before-break"
+kind = "HEAD"
+target = "horizon_client::game::Game<'_>::break_block"
+helper = "break.rs"
+bindings = [{ name = "pos", ty = "[i32;3]", value = "pos" }]
