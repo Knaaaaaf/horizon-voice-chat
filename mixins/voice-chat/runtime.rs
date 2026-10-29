@@ -247,7 +247,7 @@ pub mod pcm_capture {
 pub mod microphone {
     use super::pcm_capture::PcmFrameAssembler;
     use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-    use cpal::{Device, SampleFormat, Stream, StreamConfig};
+    use cpal::{Device, SampleFormat, SizedSample, Stream, StreamConfig};
     use std::sync::Arc;
     use std::sync::atomic::AtomicU64;
     use std::sync::mpsc::SyncSender;
@@ -294,13 +294,30 @@ pub mod microphone {
 
             let config: StreamConfig = supported.clone().into();
             let dropped_frames = Arc::new(AtomicU64::new(0));
-            let stream = build_stream(
-                &device,
-                &config,
-                supported.sample_format(),
-                sender,
-                Arc::clone(&dropped_frames),
-            )?;
+            let stream = match supported.sample_format() {
+                SampleFormat::F32 => build_stream::<f32, _>(
+                    &device,
+                    &config,
+                    sender,
+                    Arc::clone(&dropped_frames),
+                    |sample| (sample.clamp(-1.0, 1.0) * f32::from(i16::MAX)) as i16,
+                )?,
+                SampleFormat::I16 => build_stream::<i16, _>(
+                    &device,
+                    &config,
+                    sender,
+                    Arc::clone(&dropped_frames),
+                    |sample| sample,
+                )?,
+                SampleFormat::U16 => build_stream::<u16, _>(
+                    &device,
+                    &config,
+                    sender,
+                    Arc::clone(&dropped_frames),
+                    |sample| (i32::from(sample) - 32_768) as i16,
+                )?,
+                _ => return Err(CaptureError::UnsupportedSampleFormat),
+            };
             stream
                 .play()
                 .map_err(|error| CaptureError::StartStream(error.to_string()))?;
@@ -325,49 +342,31 @@ pub mod microphone {
             self.dropped_frames
                 .load(std::sync::atomic::Ordering::Relaxed)
         }
-
     }
 
-    fn build_stream(
+    fn build_stream<T, F>(
         device: &Device,
         config: &StreamConfig,
-        format: SampleFormat,
         sender: SyncSender<Vec<i16>>,
         dropped: Arc<AtomicU64>,
-    ) -> Result<Stream, CaptureError> {
+        convert: F,
+    ) -> Result<Stream, CaptureError>
+    where
+        T: SizedSample + Copy,
+        F: Fn(T) -> i16 + Send + 'static,
+    {
         let channels = usize::from(config.channels);
         let sample_rate = config.sample_rate.0;
-        let error_callback = |error| eprintln!("[horizon-voice-chat] microphone stream: {error}");
-
-        macro_rules! stream {
-            ($sample:ty, $convert:expr) => {{
-                let mut assembler =
-                    PcmFrameAssembler::new(channels, sample_rate, Arc::clone(&dropped))
-                        .ok_or(CaptureError::UnsupportedSampleRate(sample_rate))?;
-                let sender = sender.clone();
-                device
-                    .build_input_stream(
-                        config,
-                        move |data: &[$sample], _| {
-                            assembler.push(data, $convert, &sender);
-                        },
-                        error_callback,
-                        Some(Duration::from_millis(100)),
-                    )
-                    .map_err(|error| CaptureError::BuildStream(error.to_string()))
-            }};
-        }
-
-        match format {
-            SampleFormat::F32 => stream!(f32, |sample: f32| {
-                (sample.clamp(-1.0, 1.0) * f32::from(i16::MAX)) as i16
-            }),
-            SampleFormat::I16 => stream!(i16, |sample: i16| sample),
-            SampleFormat::U16 => {
-                stream!(u16, |sample: u16| { (i32::from(sample) - 32_768) as i16 })
-            }
-            _ => Err(CaptureError::UnsupportedSampleFormat),
-        }
+        let mut assembler = PcmFrameAssembler::new(channels, sample_rate, dropped)
+            .ok_or(CaptureError::UnsupportedSampleRate(sample_rate))?;
+        device
+            .build_input_stream(
+                config,
+                move |data: &[T], _| assembler.push(data, &convert, &sender),
+                |error| eprintln!("[horizon-voice-chat] microphone stream: {error}"),
+                Some(Duration::from_millis(100)),
+            )
+            .map_err(|error| CaptureError::BuildStream(error.to_string()))
     }
 }
 
