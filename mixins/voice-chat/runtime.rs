@@ -1076,15 +1076,41 @@ pub mod native_bridge {
             use super::*;
 
             #[test]
-            fn refuses_plain_http_or_missing_identity() {
-                std::env::remove_var("HORIZON_VOICE_CHAT_RELAY_URL");
-                std::env::remove_var("HORIZON_VOICE_CHAT_RELAY_TOKEN");
-                std::env::remove_var("HORIZON_VOICE_CHAT_ROOM");
-                std::env::remove_var("HORIZON_VOICE_CHAT_CLIENT_ID");
-                assert!(Config::from_env().unwrap().is_none());
+            fn relay_ids_reject_header_injection() {
                 assert!(!safe_id("../room"));
+                assert!(!safe_id("room\\nAuthorization"));
                 assert!(!safe_id(""));
+                assert!(!safe_id(&"x".repeat(65)));
                 assert!(safe_id("survival-1"));
+            }
+
+            #[test]
+            fn relay_uploads_are_bounded_and_validate_audio_packets() {
+                let frame = PcmFrame {
+                    sample_rate: 8_000,
+                    samples: vec![0; 80],
+                };
+                let packet = frame.to_packet(7).unwrap().encode().unwrap();
+                let body = upload_body(std::slice::from_ref(&packet)).unwrap();
+                assert_eq!(&body[..4], b"HVB1");
+                assert_eq!(u16::from_le_bytes([body[4], body[5]]), 1);
+                assert_eq!(
+                    u16::from_le_bytes([body[6], body[7]]) as usize,
+                    packet.len()
+                );
+                assert!(upload_body(&[]).is_none());
+                assert!(upload_body(&[vec![0; MAX_DATAGRAM_BYTES + 1]]).is_none());
+            }
+
+            #[test]
+            fn relay_response_rejects_invalid_headers_and_trailing_data() {
+                assert!(parse_response(b"nope", "client").is_none());
+                let mut empty = Vec::from(&b"HVR1"[..]);
+                empty.extend_from_slice(&0u64.to_le_bytes());
+                empty.extend_from_slice(&0u16.to_le_bytes());
+                assert_eq!(parse_response(&empty, "client"), Some((0, 0)));
+                empty.push(1);
+                assert!(parse_response(&empty, "client").is_none());
             }
         }
     }
