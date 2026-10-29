@@ -4,9 +4,9 @@ A native Rust voice-chat port for Horizon, inspired by
 [Simple Voice Chat](https://github.com/henkelmax/simple-voice-chat).
 
 > **Status: protocol foundation only — not a working voice-chat mod yet.**
-> This branch adds a bounded packet framing codec and sequence guard with Rust
-> unit tests. It does not capture microphone audio, play voice audio, open a
-> network socket, authenticate players, or relay packets through a server.
+> This branch includes a bounded packet codec, jitter buffer, proximity/rate-limit
+> helpers, and an optional cpal microphone-capture backend. Capture is not wired
+> to an in-game control or transport yet; it does not play or transmit voice.
 
 ## Implemented
 
@@ -19,8 +19,9 @@ A native Rust voice-chat port for Horizon, inspired by
 - Bounded reorder buffer for late/out-of-order frames, with explicit missing-frame
   skipping controlled by a future playout scheduler.
 - Deterministic token-bucket rate limiter to prepare per-session relay limits.
-- Unit tests for round trips, malformed input, boundaries, sequence handling,
-  proximity selection and jitter-buffer ordering.
+- Optional cpal input capture, started only when explicitly invoked, with
+  non-blocking 10 ms mono PCM16 frame assembly and bounded queue backpressure.
+- Unit tests for protocol, proximity, jitter-buffer, rate-limit, and PCM framing.
 
 See [the protocol specification](docs/protocol-v1.md) for exact fields and
 known security/compatibility limits.
@@ -30,7 +31,7 @@ known security/compatibility limits.
 - Proximity voice with configurable distance and spatial audio.
 - Push-to-talk, mute, and clear microphone/connection status.
 - Authenticated client/server transport and server-side relay.
-- Audio capture/playback and a supported codec integration.
+- Wire capture to an explicit push-to-talk/mute control, transport, playback, and a supported codec.
 - Explicit privacy controls: microphone capture only after the player enables it.
 
 ## Important architecture note
