@@ -48,6 +48,7 @@ class ClientCredential:
 class FrameRecord:
     cursor: int
     received_at: float
+    slot: int
     sender: str
     packet: bytes
 
@@ -163,10 +164,12 @@ def decode_upload(body: bytes, previous_sequence: int | None = None) -> tuple[li
     return frames, last_sequence
 
 
-def encode_download(cursor: int, frames: list[FrameRecord], own_id: str) -> bytes:
-    """Encode HVR1; response carries a scan cursor plus remote packets."""
+def encode_download(
+    cursor: int, frames: list[FrameRecord], own_id: str, server_slot: int
+) -> bytes:
+    """Encode HVR1 with cursor, server time-slot and bounded remote packets."""
     selected: list[FrameRecord] = []
-    total = 14
+    total = 22
     scan_cursor = cursor
     exhausted = True
     for frame in frames:
@@ -175,7 +178,7 @@ def encode_download(cursor: int, frames: list[FrameRecord], own_id: str) -> byte
         if frame.sender == own_id:
             scan_cursor = frame.cursor
             continue
-        cost = 1 + len(frame.sender.encode("ascii")) + 2 + len(frame.packet)
+        cost = 8 + 1 + len(frame.sender.encode("ascii")) + 2 + len(frame.packet)
         if len(selected) >= MAX_RESPONSE_FRAMES or total + cost > MAX_RESPONSE_BYTES:
             exhausted = False
             break
@@ -188,9 +191,11 @@ def encode_download(cursor: int, frames: list[FrameRecord], own_id: str) -> byte
         scan_cursor = cursor
     body = bytearray(b"HVR1")
     body.extend(scan_cursor.to_bytes(8, "little"))
+    body.extend(server_slot.to_bytes(8, "little"))
     body.extend(len(selected).to_bytes(2, "little"))
     for frame in selected:
         sender = frame.sender.encode("ascii")
+        body.extend(frame.slot.to_bytes(8, "little"))
         body.append(len(sender))
         body.extend(sender)
         body.extend(len(frame.packet).to_bytes(2, "little"))
@@ -321,9 +326,13 @@ class RelayHandler(BaseHTTPRequestHandler):
                 return
             room.members[client_id] = now
             _SEQUENCES[sequence_key] = (last_sequence if last_sequence is not None else 0, now)
-            for packet in packets:
+            current_slot = time.monotonic_ns() // 10_000_000
+            for index, packet in enumerate(packets):
                 room.cursor += 1
-                room.frames.append(FrameRecord(room.cursor, now, client_id, packet))
+                frame_slot = max(0, current_slot - (len(packets) - index - 1))
+                room.frames.append(
+                    FrameRecord(room.cursor, now, frame_slot, client_id, packet)
+                )
             _prune_room(room, now)
         self._reply(204)
 
@@ -351,14 +360,19 @@ class RelayHandler(BaseHTTPRequestHandler):
                 return
             room = _ROOMS.get(room_id)
             if room is None:
-                body = encode_download(after, [], client_id)
+                body = encode_download(after, [], client_id, time.monotonic_ns() // 10_000_000)
             else:
                 _prune_room(room, now)
                 if client_id not in room.members and len(room.members) >= MAX_ROOM_CLIENTS:
                     self._reply(429)
                     return
                 room.members[client_id] = now
-                body = encode_download(after, list(room.frames), client_id)
+                body = encode_download(
+                    after,
+                    list(room.frames),
+                    client_id,
+                    time.monotonic_ns() // 10_000_000,
+                )
         self._reply(200, body)
 
     def do_PUT(self) -> None:
