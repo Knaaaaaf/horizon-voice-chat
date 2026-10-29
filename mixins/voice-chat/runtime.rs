@@ -141,6 +141,236 @@ pub mod voice_protocol {
     }
 }
 
+pub mod pcm_capture {
+    use std::sync::mpsc::{SyncSender, TrySendError};
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::Arc;
+
+    /// Converts interleaved device samples into bounded mono PCM frames.
+    /// Frame duration is approximately 10 ms at the device's sample rate.
+    pub struct PcmFrameAssembler {
+        channels: usize,
+        frame_samples: usize,
+        pending: Vec<i16>,
+        dropped_frames: Arc<AtomicU64>,
+    }
+
+    impl PcmFrameAssembler {
+        pub fn new(
+            channels: usize,
+            sample_rate: u32,
+            dropped_frames: Arc<AtomicU64>,
+        ) -> Option<Self> {
+            if channels == 0 || !(8_000..=48_000).contains(&sample_rate) {
+                return None;
+            }
+            let frame_samples = (sample_rate as usize).div_ceil(100);
+            Some(Self {
+                channels,
+                frame_samples,
+                pending: Vec::with_capacity(frame_samples),
+                dropped_frames,
+            })
+        }
+
+        /// Downmixes each interleaved channel frame to mono and emits complete
+        /// PCM16 frames without ever blocking the device callback.
+        pub fn push<T: Copy>(
+            &mut self,
+            interleaved: &[T],
+            convert: impl Fn(T) -> i16,
+            sender: &SyncSender<Vec<i16>>,
+        ) {
+            for channels in interleaved.chunks_exact(self.channels) {
+                let sum: i32 = channels
+                    .iter()
+                    .map(|sample| i32::from(convert(*sample)))
+                    .sum();
+                let mono = (sum / self.channels as i32)
+                    .clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as i16;
+                self.pending.push(mono);
+
+                if self.pending.len() == self.frame_samples {
+                    let frame = std::mem::replace(
+                        &mut self.pending,
+                        Vec::with_capacity(self.frame_samples),
+                    );
+                    if let Err(TrySendError::Full(_) | TrySendError::Disconnected(_)) =
+                        sender.try_send(frame)
+                    {
+                        self.dropped_frames.fetch_add(1, Ordering::Relaxed);
+                    }
+                }
+            }
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use std::sync::mpsc::sync_channel;
+
+        #[test]
+        fn assembles_ten_millisecond_mono_frames_and_downmixes_stereo() {
+            let (sender, receiver) = sync_channel(4);
+            let dropped = Arc::new(AtomicU64::new(0));
+            let mut assembler = PcmFrameAssembler::new(2, 8_000, dropped.clone()).unwrap();
+            let interleaved: Vec<i16> = (0..160)
+                .flat_map(|_| [1_000_i16, 3_000_i16])
+                .collect();
+            assembler.push(&interleaved, |sample| sample, &sender);
+            let frame = receiver.try_recv().unwrap();
+            assert_eq!(frame.len(), 80);
+            assert!(frame.iter().all(|sample| *sample == 2_000));
+            assert_eq!(dropped.load(Ordering::Relaxed), 0);
+        }
+
+        #[test]
+        fn bounded_channel_drops_frames_instead_of_blocking_capture() {
+            let (sender, _receiver) = sync_channel(0);
+            let dropped = Arc::new(AtomicU64::new(0));
+            let mut assembler = PcmFrameAssembler::new(1, 8_000, dropped.clone()).unwrap();
+            assembler.push(&vec![42_i16; 80], |sample| sample, &sender);
+            assert_eq!(dropped.load(Ordering::Relaxed), 1);
+        }
+
+        #[test]
+        fn rejects_unsupported_channels_and_sample_rates() {
+            let dropped = Arc::new(AtomicU64::new(0));
+            assert!(PcmFrameAssembler::new(0, 48_000, dropped.clone()).is_none());
+            assert!(PcmFrameAssembler::new(1, 96_000, dropped.clone()).is_none());
+            assert!(PcmFrameAssembler::new(1, 4_000, dropped).is_none());
+        }
+    }
+}
+
+#[cfg(feature = "audio")]
+pub mod microphone {
+    use super::pcm_capture::PcmFrameAssembler;
+    use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+    use cpal::{Device, SampleFormat, Stream, StreamConfig};
+    use std::sync::atomic::AtomicU64;
+    use std::sync::mpsc::SyncSender;
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    #[derive(Debug)]
+    pub enum CaptureError {
+        NoInputDevice,
+        DefaultConfig(String),
+        UnsupportedSampleRate(u32),
+        UnsupportedSampleFormat,
+        BuildStream(String),
+        StartStream(String),
+    }
+
+    /// Live microphone capture. Construct this only after explicit user opt-in;
+    /// dropping it stops the OS input stream.
+    pub struct MicrophoneCapture {
+        stream: Stream,
+        sample_rate: u32,
+        channels: u16,
+        dropped_frames: Arc<AtomicU64>,
+    }
+
+    impl MicrophoneCapture {
+        pub fn start(sender: SyncSender<Vec<i16>>) -> Result<Self, CaptureError> {
+            let host = cpal::default_host();
+            let device = host.default_input_device().ok_or(CaptureError::NoInputDevice)?;
+            let supported = device
+                .default_input_config()
+                .map_err(|error| CaptureError::DefaultConfig(error.to_string()))?;
+            let sample_rate = supported.sample_rate().0;
+            let channels = supported.channels();
+            if !(8_000..=48_000).contains(&sample_rate) {
+                return Err(CaptureError::UnsupportedSampleRate(sample_rate));
+            }
+            if channels == 0 {
+                return Err(CaptureError::DefaultConfig("input has zero channels".into()));
+            }
+
+            let config: StreamConfig = supported.clone().into();
+            let dropped_frames = Arc::new(AtomicU64::new(0));
+            let stream = build_stream(
+                &device,
+                &config,
+                supported.sample_format(),
+                sender,
+                Arc::clone(&dropped_frames),
+            )?;
+            stream
+                .play()
+                .map_err(|error| CaptureError::StartStream(error.to_string()))?;
+
+            Ok(Self {
+                stream,
+                sample_rate,
+                channels,
+                dropped_frames,
+            })
+        }
+
+        pub fn sample_rate(&self) -> u32 {
+            self.sample_rate
+        }
+
+        pub fn channels(&self) -> u16 {
+            self.channels
+        }
+
+        pub fn dropped_frames(&self) -> u64 {
+            self.dropped_frames.load(std::sync::atomic::Ordering::Relaxed)
+        }
+
+        pub fn is_running(&self) -> bool {
+            let _keep_stream_alive = &self.stream;
+            true
+        }
+    }
+
+    fn build_stream(
+        device: &Device,
+        config: &StreamConfig,
+        format: SampleFormat,
+        sender: SyncSender<Vec<i16>>,
+        dropped: Arc<AtomicU64>,
+    ) -> Result<Stream, CaptureError> {
+        let channels = usize::from(config.channels);
+        let sample_rate = config.sample_rate.0;
+        let error_callback = |error| eprintln!("[horizon-voice-chat] microphone stream: {error}");
+
+        macro_rules! stream {
+            ($sample:ty, $convert:expr) => {{
+                let mut assembler =
+                    PcmFrameAssembler::new(channels, sample_rate, Arc::clone(&dropped))
+                        .ok_or(CaptureError::UnsupportedSampleRate(sample_rate))?;
+                let sender = sender.clone();
+                device
+                    .build_input_stream(
+                        config,
+                        move |data: &[$sample], _| {
+                            assembler.push(data, $convert, &sender);
+                        },
+                        error_callback,
+                        Some(Duration::from_millis(100)),
+                    )
+                    .map_err(|error| CaptureError::BuildStream(error.to_string()))
+            }};
+        }
+
+        match format {
+            SampleFormat::F32 => stream!(f32, |sample: f32| {
+                (sample.clamp(-1.0, 1.0) * f32::from(i16::MAX)) as i16
+            }),
+            SampleFormat::I16 => stream!(i16, |sample: i16| sample),
+            SampleFormat::U16 => stream!(u16, |sample: u16| {
+                (i32::from(sample) - 32_768) as i16
+            }),
+            _ => Err(CaptureError::UnsupportedSampleFormat),
+        }
+    }
+}
+
 pub mod rate_limiter {
     /// A small token bucket for per-session relay rate limiting.
     ///
@@ -351,6 +581,7 @@ pub fn before_break(pos: [i32; 3]) {
 #[cfg(test)]
 mod tests {
     use super::jitter_buffer::{JitterBuffer, PushError};
+    use super::pcm_capture::PcmFrameAssembler;
     use super::proximity::{eligible_recipients, within_range};
     use super::rate_limiter::TokenBucket;
     use super::voice_protocol::{
@@ -546,4 +777,21 @@ mod tests {
         assert_eq!(bucket.available_milli_tokens(), 0);
         assert!(bucket.allow(1_100, 1));
     }
-}
+
+    #[test]
+    fn pcm_frame_assembler_builds_mono_frames_from_interleaved_samples() {
+        use std::sync::atomic::AtomicU64;
+        use std::sync::mpsc::sync_channel;
+        use std::sync::Arc;
+
+        let (sender, receiver) = sync_channel(2);
+        let dropped = Arc::new(AtomicU64::new(0));
+        let mut assembler = PcmFrameAssembler::new(2, 8_000, dropped).unwrap();
+        let input: Vec<i16> = (0..160)
+            .flat_map(|_| [1_000_i16, 3_000_i16])
+            .collect();
+        assembler.push(&input, |sample| sample, &sender);
+        let frame = receiver.try_recv().unwrap();
+        assert_eq!(frame.len(), 80);
+        assert!(frame.iter().all(|sample| *sample == 2_000));
+    }
