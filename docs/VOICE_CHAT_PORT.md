@@ -7,9 +7,10 @@ The repository now has several tested Rust building blocks:
 - A per-session sequence guard that rejects duplicates and stale sequence numbers.
 - A bounded jitter/reorder buffer, 3D proximity recipient selection, and a
   deterministic token bucket for per-session rate limits.
-- A PCM frame assembler and an optional cpal microphone input wrapper, gated by
-  Horizon's existing `audio` feature. The wrapper starts only when explicitly
-  called and returns PCM frames through a bounded non-blocking channel.
+- A PCM frame assembler, a validated PCM16 AudioFrame payload codec, and an
+  optional cpal microphone input wrapper, gated by Horizon's existing `audio`
+  feature. The wrapper starts only when explicitly called and returns PCM frames
+  through a bounded non-blocking channel. Audio is currently uncompressed.
 
 The tests cover serialization boundaries, malformed input, sequence wraparound,
 out-of-order delivery, buffer bounds, missing-frame skips, invalid positions,
