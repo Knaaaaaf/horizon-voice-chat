@@ -73,15 +73,17 @@ class RelayProtocolTests(unittest.TestCase):
         local = packet(0)
         remote = packet(0)
         room_frames = [
-            server.FrameRecord(1, 0.0, "alice", local),
-            server.FrameRecord(2, 0.0, "bob", remote),
+            server.FrameRecord(1, 0.0, 10, "alice", local),
+            server.FrameRecord(2, 0.0, 10, "bob", remote),
         ]
-        body = server.encode_download(0, room_frames, "alice")
+        body = server.encode_download(0, room_frames, "alice", 18)
         self.assertEqual(body[:4], b"HVR1")
         self.assertEqual(int.from_bytes(body[4:12], "little"), 2)
-        self.assertEqual(int.from_bytes(body[12:14], "little"), 1)
-        self.assertEqual(body[14], 3)
-        self.assertEqual(body[15:18], b"bob")
+        self.assertEqual(int.from_bytes(body[12:20], "little"), 18)
+        self.assertEqual(int.from_bytes(body[20:22], "little"), 1)
+        self.assertEqual(int.from_bytes(body[22:30], "little"), 10)
+        self.assertEqual(body[30], 3)
+        self.assertEqual(body[31:34], b"bob")
 
 
 if __name__ == "__main__":
