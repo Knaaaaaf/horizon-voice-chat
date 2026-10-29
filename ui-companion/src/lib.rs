@@ -61,7 +61,10 @@ fn stored_distance() -> usize {
 
 impl VoiceUi {
     fn save(&self) {
-        let _ = storage::set("mic_enabled", if self.mic_enabled { b"true" } else { b"false" });
+        let _ = storage::set(
+            "mic_enabled",
+            if self.mic_enabled { b"true" } else { b"false" },
+        );
         let _ = storage::set("muted", if self.muted { b"true" } else { b"false" });
         let _ = storage::set("ptt", if self.push_to_talk { b"true" } else { b"false" });
         let _ = storage::set("distance", self.distance.to_string().as_bytes());
@@ -90,7 +93,14 @@ impl VoiceUi {
             }),
             Widget::Button(ButtonWidget {
                 id: MODE_BUTTON,
-                label: format!("Mode: {}", if self.push_to_talk { "Push to talk" } else { "Voice activation (network gate pending)" }),
+                label: format!(
+                    "Mode: {}",
+                    if self.push_to_talk {
+                        "Push to talk"
+                    } else {
+                        "Voice activation (network gate pending)"
+                    }
+                ),
             }),
             Widget::Button(ButtonWidget {
                 id: DISTANCE_BUTTON,
@@ -98,7 +108,8 @@ impl VoiceUi {
             }),
             Widget::Text(TextWidget {
                 id: 12,
-                text: "Open with V. Hold Push-to-talk (default C); rebind both in Options > Mods.".into(),
+                text: "Open with V. Hold Push-to-talk (default C); rebind both in Options > Mods."
+                    .into(),
                 color: 0xB8C4D0,
             }),
             Widget::Button(ButtonWidget {
@@ -123,8 +134,20 @@ impl VoiceUi {
     fn draw_status(&self) {
         let mic_off = self.muted || !self.mic_enabled;
         let active = self.backend_status.starts_with("Capturing locally");
-        let status = if mic_off { "MIC OFF" } else if active { "MIC ACTIVE" } else { "MIC ENABLED" };
-        let color = if mic_off { RED } else if active { GREEN } else { 0xFFCC66 };
+        let status = if mic_off {
+            "MIC OFF"
+        } else if active {
+            "MIC ACTIVE"
+        } else {
+            "MIC ENABLED"
+        };
+        let color = if mic_off {
+            RED
+        } else if active {
+            GREEN
+        } else {
+            0xFFCC66
+        };
         let width = render::text_width(status) + 28.0;
         render::set_corner(
             Corner::TopRight,
@@ -132,11 +155,21 @@ impl VoiceUi {
             18.0,
             &[
                 Shape::Fill(FillShape {
-                    rect: Rect { x: 0.0, y: 0.0, w: width, h: 18.0 },
+                    rect: Rect {
+                        x: 0.0,
+                        y: 0.0,
+                        w: width,
+                        h: 18.0,
+                    },
                     color: BG,
                 }),
                 Shape::Fill(FillShape {
-                    rect: Rect { x: 4.0, y: 6.0, w: 6.0, h: 6.0 },
+                    rect: Rect {
+                        x: 4.0,
+                        y: 6.0,
+                        w: 6.0,
+                        h: 6.0,
+                    },
                     color,
                 }),
                 Shape::Text(TextShape {
