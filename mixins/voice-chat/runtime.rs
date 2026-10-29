@@ -157,8 +157,8 @@ pub fn before_break(pos: [i32; 3]) {
 #[cfg(test)]
 mod tests {
     use super::voice_protocol::{
-        CodecError, MAX_DATAGRAM_BYTES, MAX_PAYLOAD_BYTES, Packet, PacketKind, SequenceGuard,
-        HEADER_LEN,
+        CodecError, HEADER_LEN, MAX_DATAGRAM_BYTES, MAX_PAYLOAD_BYTES, Packet, PacketKind,
+        SequenceGuard,
     };
     use super::*;
 
