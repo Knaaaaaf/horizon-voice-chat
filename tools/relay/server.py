@@ -35,6 +35,7 @@ MAX_PACKETS_PER_SECOND = 125
 MAX_BYTES_PER_SECOND = 128_000
 MAX_GETS_PER_SECOND = 40
 ID_RE = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
+TOKEN_RE = re.compile(r"^[A-Za-z0-9_-]{32,256}$")
 SESSION_RE = re.compile(r"^[A-Za-z0-9._-]{1,96}$")
 
 
@@ -91,7 +92,7 @@ def parse_clients(raw: str) -> dict[str, ClientCredential]:
             raise ValueError(f"credential entry for {client_id!r} must be an object")
         token = item.get("token")
         rooms = item.get("rooms")
-        if not isinstance(token, str) or len(token) < 32 or any(ch.isspace() for ch in token):
+        if not isinstance(token, str) or not TOKEN_RE.fullmatch(token):
             raise ValueError(f"token for {client_id!r} must be at least 32 non-whitespace characters")
         if (
             not isinstance(rooms, list)
@@ -302,10 +303,22 @@ class RelayHandler(BaseHTTPRequestHandler):
         now = time.monotonic()
         sequence_key = (client_id, session_id)
         with _LOCK:
+            # Expire sequence state and cap concurrent/recent sessions per
+            # enrolled identity. An authenticated client cannot grow this map
+            # without bound by repeatedly changing X-HVC-Session.
+            stale_sessions = [
+                key for key, value in _SEQUENCES.items() if now - value[1] > 30.0
+            ]
+            for key in stale_sessions:
+                _SEQUENCES.pop(key, None)
+            active_sessions = sum(1 for key in _SEQUENCES if key[0] == client_id)
+            if sequence_key not in _SEQUENCES and active_sessions >= 8:
+                self._reply(429)
+                return
             current_sequence = _SEQUENCES.get(sequence_key)
             previous = current_sequence[0] if current_sequence else None
-            # A new process gets a new random-ish session ID; the sequence guard
-            # is scoped to that session so restarting cannot inherit stale state.
+            # A new process gets a new session ID; the sequence guard is scoped
+            # to that session so restarting cannot inherit stale sequence state.
             try:
                 packets, last_sequence = decode_upload(body, previous)
             except ValueError:
