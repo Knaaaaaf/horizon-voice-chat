@@ -1121,6 +1121,10 @@ pub mod native_bridge {
         receiver: Option<std::sync::mpsc::Receiver<Vec<i16>>>,
         attempted: bool,
         last_error: Option<String>,
+        relay: Option<relay_client::RelayWorker>,
+        relay_attempted: bool,
+        relay_status: String,
+        sequence: u32,
     }
 
     #[cfg(feature = "audio")]
@@ -1131,6 +1135,10 @@ pub mod native_bridge {
                 receiver: None,
                 attempted: false,
                 last_error: None,
+                relay: None,
+                relay_attempted: false,
+                relay_status: "Relay not configured — local capture only".into(),
+                sequence: 0,
             }
         }
     }
@@ -1138,6 +1146,25 @@ pub mod native_bridge {
     #[cfg(feature = "audio")]
     impl AudioRuntime {
         fn update(&mut self, settings: &Settings) -> String {
+            if !self.relay_attempted {
+                self.relay_attempted = true;
+                match relay_client::RelayWorker::start() {
+                    Ok(Some(worker)) => {
+                        self.relay = Some(worker);
+                        self.relay_status = "Relay connecting over HTTPS".into();
+                    }
+                    Ok(None) => {
+                        self.relay_status = "Relay not configured — local capture only".into();
+                    }
+                    Err(error) => self.relay_status = error,
+                }
+            }
+            if let Some(relay) = &self.relay
+                && let Some(status) = relay.latest_status()
+            {
+                self.relay_status = status;
+            }
+
             let requested = settings.microphone_enabled && !settings.muted;
             if !requested {
                 self.capture = None;
@@ -1145,9 +1172,9 @@ pub mod native_bridge {
                 self.attempted = false;
                 self.last_error = None;
                 return if settings.microphone_enabled && settings.muted {
-                    "Muted — native microphone stopped".into()
+                    format!("Muted — native microphone stopped; {}", self.relay_status)
                 } else {
-                    "Microphone off".into()
+                    format!("Microphone off; {}", self.relay_status)
                 };
             }
 
@@ -1166,30 +1193,82 @@ pub mod native_bridge {
                 }
             }
 
+            let mut captured = Vec::new();
             if let Some(receiver) = &self.receiver {
-                // The local capture is real, but no network sender is wired up.
-                // Drain bounded PCM frames so the device callback never backs up.
-                while receiver.try_recv().is_ok() {}
+                // Bound work on the game thread by the microphone channel's
+                // fixed capacity. The callback itself never blocks on sending.
+                while let Ok(samples) = receiver.try_recv() {
+                    captured.push(samples);
+                }
+            }
+
+            if let Some(capture) = &self.capture {
+                let sample_rate = capture.sample_rate();
+                let mut encoded = Vec::with_capacity(captured.len());
+                for samples in captured {
+                    // Push-to-talk is a hard gate. The optional voice-activation
+                    // mode uses a conservative frame-energy threshold; it is
+                    // a basic level gate, not a noise-robust speech detector.
+                    let gate_open = transmit_allowed(settings)
+                        && (settings.push_to_talk || frame_has_voice_activity(&samples));
+                    if !gate_open {
+                        continue;
+                    }
+                    let frame = super::pcm_codec::PcmFrame {
+                        sample_rate,
+                        samples,
+                    };
+                    if let Ok(packet) = frame.to_packet(self.sequence) {
+                        self.sequence = self.sequence.wrapping_add(1);
+                        if let Ok(bytes) = packet.encode() {
+                            encoded.push(bytes);
+                        }
+                    }
+                }
+
+                if !encoded.is_empty() {
+                    if let Some(relay) = &self.relay
+                        && relay.send(encoded).is_err()
+                    {
+                        self.relay_status =
+                            "Relay transmit queue busy — outgoing frames dropped".into();
+                    }
+                }
             }
 
             if self.capture.is_none() {
                 return format!(
-                    "Microphone error — {}",
+                    "Microphone error — {}; {}",
                     self.last_error
                         .as_deref()
-                        .unwrap_or("capture did not start")
+                        .unwrap_or("capture did not start"),
+                    self.relay_status
                 );
             }
             if settings.push_to_talk {
-                if transmit_allowed(settings) {
-                    "Capturing locally — PTT held; server relay offline".into()
+                if settings.ptt_down {
+                    format!("Capturing locally — PTT held; {}", self.relay_status)
                 } else {
-                    "Capturing locally — PTT released; server relay offline".into()
+                    format!("Capturing locally — PTT released; {}", self.relay_status)
                 }
             } else {
-                "Capturing locally — server relay offline".into()
+                format!("Capturing locally — level-gated voice activation; {}", self.relay_status)
             }
         }
+    }
+
+    #[cfg(feature = "audio")]
+    fn frame_has_voice_activity(samples: &[i16]) -> bool {
+        if samples.is_empty() {
+            return false;
+        }
+        let power = samples.iter().map(|sample| {
+            let sample = i64::from(*sample);
+            (sample * sample) as u128
+        }).sum::<u128>();
+        // RMS > 600/32768 (roughly -35 dBFS). This intentionally simple gate
+        // is only a fallback; a real voice activity detector is still needed.
+        power / samples.len() as u128 > 600_u128 * 600_u128
     }
 
     #[derive(Default)]
