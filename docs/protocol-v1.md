@@ -2,8 +2,9 @@
 
 ## Status and scope
 
-Implemented in the voice-chat runtime as a standard-library-only codec, plus a
-separate 3D proximity selection helper, both with unit tests. This is an internal, experimental wire format for the Horizon port;
+Implemented in the voice-chat runtime as a standard-library-only codec, a
+3D proximity selection helper, and a bounded jitter/reorder buffer, all with
+unit tests. This is an internal, experimental wire format for the Horizon port;
 it is **not compatible with Simple Voice Chat's Java protocol**.
 
 This document defines packet framing only. No UDP socket, microphone capture,
@@ -39,9 +40,11 @@ rejected. This first version drops late/reordered frames instead of buffering
 them; a future jitter buffer may improve audio quality.
 
 The guard is **not authentication** and does not stop a spoofing sender who can
-forge a fresh sequence. A real transport needs authenticated session identity,
-rate limits, replay protection tied to that session, and server-authoritative
-player membership and positions.
+forge a fresh sequence. The separate jitter buffer allows in-window reordering
+and lets the caller explicitly skip a missing sequence after its playout
+deadline; it intentionally has no clock or automatic timeout. A real transport
+needs authenticated session identity, rate limits, replay protection tied to
+that session, and server-authoritative player membership and positions.
 
 ## Payloads
 
