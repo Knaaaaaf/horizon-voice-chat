@@ -370,6 +370,138 @@ pub mod microphone {
     }
 }
 
+#[cfg(feature = "audio")]
+pub mod pcm_playback {
+    use std::{
+        collections::VecDeque,
+        sync::{Arc, Mutex},
+        time::Duration,
+    };
+
+    use cpal::{
+        Device, SampleFormat, SizedSample, Stream, StreamConfig,
+        traits::{DeviceTrait, HostTrait, StreamTrait},
+    };
+
+    const MAX_QUEUE_SECONDS: usize = 2;
+
+    /// Mono output samples in device sample rate. Writers are the relay worker;
+    /// the real-time device callback only drains this bounded queue.
+    pub struct PlaybackQueue {
+        sample_rate: u32,
+        max_samples: usize,
+        samples: VecDeque<i16>,
+    }
+
+    impl PlaybackQueue {
+        fn new(sample_rate: u32) -> Self {
+            Self {
+                sample_rate,
+                max_samples: sample_rate as usize * MAX_QUEUE_SECONDS,
+                samples: VecDeque::with_capacity(sample_rate as usize / 2),
+            }
+        }
+
+        /// Resample a mono frame and append it without allowing unbounded latency.
+        pub fn enqueue(&mut self, samples: &[i16], source_rate: u32) {
+            if samples.is_empty() || !(8_000..=48_000).contains(&source_rate) {
+                return;
+            }
+            let output_len = (samples.len() * self.sample_rate as usize)
+                .div_ceil(source_rate as usize);
+            let mut converted = Vec::with_capacity(output_len);
+            for index in 0..output_len {
+                let source_index = index * source_rate as usize / self.sample_rate as usize;
+                converted.push(samples[source_index.min(samples.len() - 1)]);
+            }
+            if converted.len() > self.max_samples {
+                converted.drain(..converted.len() - self.max_samples);
+            }
+            let overflow = self.samples.len() + converted.len();
+            if overflow > self.max_samples {
+                let discard = overflow - self.max_samples;
+                self.samples.drain(..discard.min(self.samples.len()));
+            }
+            self.samples.extend(converted);
+        }
+    }
+
+    pub struct AudioPlayback {
+        _stream: Stream,
+        queue: Arc<Mutex<PlaybackQueue>>,
+    }
+
+    impl AudioPlayback {
+        pub fn start() -> Result<Self, String> {
+            let host = cpal::default_host();
+            let device = host
+                .default_output_device()
+                .ok_or_else(|| "no default audio output device".to_string())?;
+            let supported = device
+                .default_output_config()
+                .map_err(|error| format!("default output config: {error}"))?;
+            let sample_rate = supported.sample_rate().0;
+            if !(8_000..=192_000).contains(&sample_rate) || supported.channels() == 0 {
+                return Err(format!("unsupported output config: {sample_rate} Hz"));
+            }
+            let config: StreamConfig = supported.clone().into();
+            let queue = Arc::new(Mutex::new(PlaybackQueue::new(sample_rate)));
+            let stream = match supported.sample_format() {
+                SampleFormat::F32 => build_stream::<f32, _>(
+                    &device, &config, Arc::clone(&queue),
+                    |sample| sample as f32 / 32768.0,
+                )?,
+                SampleFormat::I16 => build_stream::<i16, _>(
+                    &device, &config, Arc::clone(&queue), |sample| sample,
+                )?,
+                SampleFormat::U16 => build_stream::<u16, _>(
+                    &device, &config, Arc::clone(&queue),
+                    |sample| (i32::from(sample) + 32_768) as u16,
+                )?,
+                _ => return Err("unsupported audio output sample format".into()),
+            };
+            stream.play().map_err(|error| format!("start output stream: {error}"))?;
+            Ok(Self { _stream: stream, queue })
+        }
+
+        pub fn queue(&self) -> Arc<Mutex<PlaybackQueue>> {
+            Arc::clone(&self.queue)
+        }
+    }
+
+    fn build_stream<T, F>(
+        device: &Device,
+        config: &StreamConfig,
+        queue: Arc<Mutex<PlaybackQueue>>,
+        convert: F,
+    ) -> Result<Stream, String>
+    where
+        T: SizedSample + Copy,
+        F: Fn(i16) -> T + Send + 'static,
+    {
+        let channels = usize::from(config.channels).max(1);
+        device
+            .build_output_stream(
+                config,
+                move |data: &mut [T], _| {
+                    let mut samples = match queue.lock() {
+                        Ok(queue) => queue,
+                        Err(poisoned) => poisoned.into_inner(),
+                    };
+                    for frame in data.chunks_mut(channels) {
+                        let sample = samples.samples.pop_front().unwrap_or(0);
+                        for channel in frame {
+                            *channel = convert(sample);
+                        }
+                    }
+                },
+                |error| eprintln!("[horizon-voice-chat] speaker stream: {error}"),
+                Some(Duration::from_millis(100)),
+            )
+            .map_err(|error| format!("build output stream: {error}"))
+    }
+}
+
 pub mod pcm_codec {
     use super::voice_protocol::{MAX_PAYLOAD_BYTES, Packet, PacketKind};
 
