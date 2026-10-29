@@ -407,8 +407,8 @@ pub mod pcm_playback {
             if samples.is_empty() || !(8_000..=48_000).contains(&source_rate) {
                 return;
             }
-            let output_len = (samples.len() * self.sample_rate as usize)
-                .div_ceil(source_rate as usize);
+            let output_len =
+                (samples.len() * self.sample_rate as usize).div_ceil(source_rate as usize);
             let mut converted = Vec::with_capacity(output_len);
             for index in 0..output_len {
                 let source_index = index * source_rate as usize / self.sample_rate as usize;
@@ -447,21 +447,28 @@ pub mod pcm_playback {
             let config: StreamConfig = supported.clone().into();
             let queue = Arc::new(Mutex::new(PlaybackQueue::new(sample_rate)));
             let stream = match supported.sample_format() {
-                SampleFormat::F32 => build_stream::<f32, _>(
-                    &device, &config, Arc::clone(&queue),
-                    |sample| sample as f32 / 32768.0,
-                )?,
-                SampleFormat::I16 => build_stream::<i16, _>(
-                    &device, &config, Arc::clone(&queue), |sample| sample,
-                )?,
-                SampleFormat::U16 => build_stream::<u16, _>(
-                    &device, &config, Arc::clone(&queue),
-                    |sample| (i32::from(sample) + 32_768) as u16,
-                )?,
+                SampleFormat::F32 => {
+                    build_stream::<f32, _>(&device, &config, Arc::clone(&queue), |sample| {
+                        sample as f32 / 32768.0
+                    })?
+                }
+                SampleFormat::I16 => {
+                    build_stream::<i16, _>(&device, &config, Arc::clone(&queue), |sample| sample)?
+                }
+                SampleFormat::U16 => {
+                    build_stream::<u16, _>(&device, &config, Arc::clone(&queue), |sample| {
+                        (i32::from(sample) + 32_768) as u16
+                    })?
+                }
                 _ => return Err("unsupported audio output sample format".into()),
             };
-            stream.play().map_err(|error| format!("start output stream: {error}"))?;
-            Ok(Self { _stream: stream, queue })
+            stream
+                .play()
+                .map_err(|error| format!("start output stream: {error}"))?;
+            Ok(Self {
+                _stream: stream,
+                queue,
+            })
         }
 
         pub fn queue(&self) -> Arc<Mutex<PlaybackQueue>> {
@@ -1075,9 +1082,8 @@ pub mod native_bridge {
             if frames.is_empty() || frames.len() > MAX_UPLOAD_PACKETS {
                 return None;
             }
-            let mut body = Vec::with_capacity(
-                6 + frames.iter().map(|frame| frame.len() + 2).sum::<usize>(),
-            );
+            let mut body =
+                Vec::with_capacity(6 + frames.iter().map(|frame| frame.len() + 2).sum::<usize>());
             body.extend_from_slice(b"HVB1");
             body.extend_from_slice(&(frames.len() as u16).to_le_bytes());
             for frame in frames {
@@ -1085,7 +1091,8 @@ pub mod native_bridge {
                     return None;
                 }
                 let packet = Packet::decode(frame).ok()?;
-                if packet.kind != PacketKind::AudioFrame || PcmFrame::from_packet(&packet).is_err() {
+                if packet.kind != PacketKind::AudioFrame || PcmFrame::from_packet(&packet).is_err()
+                {
                     return None;
                 }
                 body.extend_from_slice(&(frame.len() as u16).to_le_bytes());
@@ -1153,7 +1160,11 @@ pub mod native_bridge {
             }
         }
 
-        fn mix_incoming(pending: &mut BTreeMap<u64, Vec<i32>>, frames: Vec<RemoteFrame>, now_slot: u64) {
+        fn mix_incoming(
+            pending: &mut BTreeMap<u64, Vec<i32>>,
+            frames: Vec<RemoteFrame>,
+            now_slot: u64,
+        ) {
             for frame in frames {
                 // Frames outside the jitter window are too late to play in sync.
                 if frame.slot.saturating_add(PLAYOUT_DELAY_SLOTS) <= now_slot
@@ -1220,7 +1231,11 @@ pub mod native_bridge {
             let mut connected = false;
             let mut last_report = Instant::now() - Duration::from_secs(2);
             let mut pending = BTreeMap::<u64, Vec<i32>>::new();
-            report(&status, &mut last_status, "Relay connecting over HTTPS".into());
+            report(
+                &status,
+                &mut last_status,
+                "Relay connecting over HTTPS".into(),
+            );
 
             loop {
                 let mut frames = Vec::new();
@@ -1505,7 +1520,10 @@ pub mod native_bridge {
                     format!("Capturing locally — PTT released; {}", self.relay_status)
                 }
             } else {
-                format!("Capturing locally — level-gated voice activation; {}", self.relay_status)
+                format!(
+                    "Capturing locally — level-gated voice activation; {}",
+                    self.relay_status
+                )
             }
         }
     }
@@ -1515,10 +1533,13 @@ pub mod native_bridge {
         if samples.is_empty() {
             return false;
         }
-        let power = samples.iter().map(|sample| {
-            let sample = i64::from(*sample);
-            (sample * sample) as u128
-        }).sum::<u128>();
+        let power = samples
+            .iter()
+            .map(|sample| {
+                let sample = i64::from(*sample);
+                (sample * sample) as u128
+            })
+            .sum::<u128>();
         // RMS > 600/32768 (roughly -35 dBFS). This intentionally simple gate
         // is only a fallback; a real voice activity detector is still needed.
         power / samples.len() as u128 > 600_u128 * 600_u128
