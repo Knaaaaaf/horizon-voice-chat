@@ -14,6 +14,7 @@ use horizon_mod_sdk::{
 };
 
 const OPEN_KEY: &str = "voice_menu";
+const PTT_KEY: &str = "voice_push_to_talk";
 const MIC_BUTTON: u32 = 1;
 const MUTE_BUTTON: u32 = 2;
 const MODE_BUTTON: u32 = 3;
@@ -30,6 +31,9 @@ struct VoiceUi {
     muted: bool,
     push_to_talk: bool,
     distance: usize,
+    ptt_down: bool,
+    backend_status: String,
+    screen_open: bool,
 }
 
 const DISTANCES: [u32; 4] = [8, 16, 32, 48];
@@ -39,6 +43,12 @@ fn stored_bool(key: &str, default: bool) -> bool {
         .and_then(|bytes| String::from_utf8(bytes).ok())
         .map(|value| value.trim() == "true")
         .unwrap_or(default)
+}
+
+fn backend_status() -> String {
+    storage::get("backend_status")
+        .and_then(|bytes| String::from_utf8(bytes).ok())
+        .unwrap_or_else(|| "Waiting for native audio status".into())
 }
 
 fn stored_distance() -> usize {
@@ -67,7 +77,7 @@ impl VoiceUi {
             }),
             Widget::Text(TextWidget {
                 id: 11,
-                text: "Audio transport is not connected in this build.".into(),
+                text: format!("Native backend: {}", self.backend_status),
                 color: 0xFFCC66,
             }),
             Widget::Button(ButtonWidget {
@@ -80,7 +90,7 @@ impl VoiceUi {
             }),
             Widget::Button(ButtonWidget {
                 id: MODE_BUTTON,
-                label: format!("Mode: {}", if self.push_to_talk { "Push to talk" } else { "Voice activation (UI only)" }),
+                label: format!("Mode: {}", if self.push_to_talk { "Push to talk" } else { "Voice activation (network gate pending)" }),
             }),
             Widget::Button(ButtonWidget {
                 id: DISTANCE_BUTTON,
@@ -88,7 +98,7 @@ impl VoiceUi {
             }),
             Widget::Text(TextWidget {
                 id: 12,
-                text: "Open this menu with V. Rebind it in Options > Mods.".into(),
+                text: "Open with V. Hold Push-to-talk (default C); rebind both in Options > Mods.".into(),
                 color: 0xB8C4D0,
             }),
             Widget::Button(ButtonWidget {
@@ -103,6 +113,7 @@ impl VoiceUi {
     }
 
     fn open(&mut self) {
+        self.screen_open = true;
         let _ = ui::open_screen(&Screen {
             title: "Horizon Voice Chat".into(),
             widgets: self.widgets(),
@@ -110,8 +121,10 @@ impl VoiceUi {
     }
 
     fn draw_status(&self) {
-        let status = if self.muted || !self.mic_enabled { "MIC OFF" } else { "MIC READY" };
-        let color = if self.muted || !self.mic_enabled { RED } else { GREEN };
+        let mic_off = self.muted || !self.mic_enabled;
+        let active = self.backend_status.starts_with("Capturing locally");
+        let status = if mic_off { "MIC OFF" } else if active { "MIC ACTIVE" } else { "MIC ENABLED" };
+        let color = if mic_off { RED } else if active { GREEN } else { 0xFFCC66 };
         let width = render::text_width(status) + 28.0;
         render::set_corner(
             Corner::TopRight,
@@ -140,6 +153,9 @@ impl VoiceUi {
     fn changed(&mut self) {
         self.save();
         self.page();
+        if self.screen_open {
+            self.open();
+        }
         self.draw_status();
     }
 }
@@ -147,11 +163,17 @@ impl VoiceUi {
 impl Mod for VoiceUi {
     fn init() -> Result<(Self, Registration), String> {
         input::register_key(OPEN_KEY, "Open voice chat menu", "key.keyboard.v")?;
+        input::register_key(PTT_KEY, "Push to talk", "key.keyboard.c")?;
+        // A key held in the previous game session must never remain held.
+        let _ = storage::set("ptt_down", b"false");
         let this = Self {
             mic_enabled: stored_bool("mic_enabled", false),
             muted: stored_bool("muted", false),
             push_to_talk: stored_bool("ptt", true),
             distance: stored_distance(),
+            ptt_down: false,
+            backend_status: backend_status(),
+            screen_open: false,
         };
         this.page();
         this.draw_status();
@@ -160,10 +182,27 @@ impl Mod for VoiceUi {
 
     fn tick(&mut self, _tick: u64) {
         for event in input::poll() {
-            if let Event::KeyDown(key) = event {
-                if key == OPEN_KEY {
-                    self.open();
+            match event {
+                Event::KeyDown(key) if key == OPEN_KEY => self.open(),
+                Event::KeyDown(key) if key == PTT_KEY => {
+                    if !self.ptt_down {
+                        self.ptt_down = true;
+                        let _ = storage::set("ptt_down", b"true");
+                    }
                 }
+                Event::KeyUp(key) if key == PTT_KEY => {
+                    self.ptt_down = false;
+                    let _ = storage::set("ptt_down", b"false");
+                }
+                _ => {}
+            }
+        }
+        let current_status = backend_status();
+        if current_status != self.backend_status {
+            self.backend_status = current_status;
+            self.page();
+            if self.screen_open {
+                self.open();
             }
         }
         self.draw_status();
@@ -179,6 +218,12 @@ impl Mod for VoiceUi {
             _ => return,
         }
         self.changed();
+    }
+
+    fn ui_closed(&mut self) {
+        self.screen_open = false;
+        self.ptt_down = false;
+        let _ = storage::set("ptt_down", b"false");
     }
 
     fn ui_settings_opened(&mut self) {
