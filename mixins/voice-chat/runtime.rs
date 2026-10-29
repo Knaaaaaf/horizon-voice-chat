@@ -786,6 +786,310 @@ pub mod native_bridge {
     }
 
     #[cfg(feature = "audio")]
+    mod relay_client {
+        use std::{
+            io::Read,
+            sync::mpsc::{self, Receiver, SyncSender, TrySendError},
+            thread,
+            time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+        };
+
+        use super::super::{
+            pcm_codec::PcmFrame,
+            voice_protocol::{MAX_DATAGRAM_BYTES, Packet, PacketKind},
+        };
+
+        const MAX_UPLOAD_PACKETS: usize = 32;
+        const MAX_RESPONSE_BYTES: usize = 512 * 1024;
+        const MAX_RESPONSE_PACKETS: usize = 256;
+
+        struct Config {
+            endpoint: String,
+            token: String,
+            room: String,
+            client_id: String,
+            session_id: String,
+        }
+
+        fn safe_id(value: &str) -> bool {
+            !value.is_empty()
+                && value.len() <= 64
+                && value
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || b"._-".contains(&byte))
+        }
+
+        impl Config {
+            fn from_env() -> Result<Option<Self>, String> {
+                let endpoint = std::env::var("HORIZON_VOICE_CHAT_RELAY_URL").ok();
+                let token = std::env::var("HORIZON_VOICE_CHAT_RELAY_TOKEN").ok();
+                let room = std::env::var("HORIZON_VOICE_CHAT_ROOM").ok();
+                let client_id = std::env::var("HORIZON_VOICE_CHAT_CLIENT_ID").ok();
+
+                if endpoint.is_none() && token.is_none() && room.is_none() && client_id.is_none() {
+                    return Ok(None);
+                }
+
+                let endpoint = endpoint.ok_or_else(|| {
+                    "Relay not configured: missing HORIZON_VOICE_CHAT_RELAY_URL".to_string()
+                })?;
+                let token = token.ok_or_else(|| {
+                    "Relay not configured: missing HORIZON_VOICE_CHAT_RELAY_TOKEN".to_string()
+                })?;
+                let room = room.ok_or_else(|| {
+                    "Relay not configured: missing HORIZON_VOICE_CHAT_ROOM".to_string()
+                })?;
+                let client_id = client_id.ok_or_else(|| {
+                    "Relay not configured: missing HORIZON_VOICE_CHAT_CLIENT_ID".to_string()
+                })?;
+
+                // ureq validates the HTTPS certificate by default. Never allow
+                // credentials or voice payloads to travel over plain HTTP.
+                if !endpoint.starts_with("https://")
+                    || !endpoint.ends_with("/v1/frames")
+                    || endpoint.contains('@')
+                    || endpoint.contains('#')
+                    || endpoint.contains('?')
+                {
+                    return Err("Relay URL must be an HTTPS endpoint ending in /v1/frames".into());
+                }
+                if token.len() < 32 || token.bytes().any(|byte| byte.is_ascii_whitespace()) {
+                    return Err("Relay token must be at least 32 non-whitespace characters".into());
+                }
+                if !safe_id(&room) || !safe_id(&client_id) {
+                    return Err("Relay room/client ID must use 1–64 ASCII letters, digits, '.', '_' or '-'".into());
+                }
+
+                let now = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_nanos();
+                let session_id = format!("s-{}-{now:x}", std::process::id());
+                Ok(Some(Self {
+                    endpoint,
+                    token,
+                    room,
+                    client_id,
+                    session_id,
+                }))
+            }
+        }
+
+        pub(super) struct RelayWorker {
+            sender: SyncSender<Vec<Vec<u8>>>,
+            statuses: Receiver<String>,
+        }
+
+        impl RelayWorker {
+            pub(super) fn start() -> Result<Option<Self>, String> {
+                let Some(config) = Config::from_env()? else {
+                    return Ok(None);
+                };
+                let (sender, outbound) = mpsc::sync_channel::<Vec<Vec<u8>>>(8);
+                let (status_sender, statuses) = mpsc::channel::<String>();
+                thread::Builder::new()
+                    .name("horizon-voice-relay".into())
+                    .spawn(move || run(config, outbound, status_sender))
+                    .map_err(|_| "Could not start relay worker thread".to_string())?;
+                Ok(Some(Self { sender, statuses }))
+            }
+
+            pub(super) fn send(&self, frames: Vec<Vec<u8>>) -> Result<(), ()> {
+                match self.sender.try_send(frames) {
+                    Ok(()) => Ok(()),
+                    Err(TrySendError::Full(_)) | Err(TrySendError::Disconnected(_)) => Err(()),
+                }
+            }
+
+            pub(super) fn latest_status(&self) -> Option<String> {
+                self.statuses.try_iter().last()
+            }
+        }
+
+        fn upload_body(frames: &[Vec<u8>]) -> Option<Vec<u8>> {
+            if frames.is_empty() || frames.len() > MAX_UPLOAD_PACKETS {
+                return None;
+            }
+            let mut body = Vec::with_capacity(6 + frames.iter().map(|frame| frame.len() + 2).sum::<usize>());
+            body.extend_from_slice(b"HVB1");
+            body.extend_from_slice(&(frames.len() as u16).to_le_bytes());
+            for frame in frames {
+                if frame.len() > MAX_DATAGRAM_BYTES || frame.len() > u16::MAX as usize {
+                    return None;
+                }
+                let packet = Packet::decode(frame).ok()?;
+                if packet.kind != PacketKind::AudioFrame || PcmFrame::from_packet(&packet).is_err() {
+                    return None;
+                }
+                body.extend_from_slice(&(frame.len() as u16).to_le_bytes());
+                body.extend_from_slice(frame);
+            }
+            Some(body)
+        }
+
+        /// Validates the bounded response before advancing the relay cursor.
+        /// Frames from other clients are counted for status now; playback is a
+        /// separate stage and is deliberately not faked here.
+        fn parse_response(bytes: &[u8], own_id: &str) -> Option<(u64, u64)> {
+            if bytes.len() < 14 || bytes.len() > MAX_RESPONSE_BYTES || &bytes[..4] != b"HVR1" {
+                return None;
+            }
+            let cursor = u64::from_le_bytes(bytes[4..12].try_into().ok()?);
+            let count = u16::from_le_bytes([bytes[12], bytes[13]]) as usize;
+            if count > MAX_RESPONSE_PACKETS {
+                return None;
+            }
+            let mut at = 14usize;
+            let mut remote = 0u64;
+            for _ in 0..count {
+                let sender_len = *bytes.get(at)? as usize;
+                at += 1;
+                if sender_len == 0 || sender_len > 64 || at + sender_len + 2 > bytes.len() {
+                    return None;
+                }
+                let sender = std::str::from_utf8(&bytes[at..at + sender_len]).ok()?;
+                if !safe_id(sender) {
+                    return None;
+                }
+                at += sender_len;
+                let packet_len = u16::from_le_bytes([bytes[at], bytes[at + 1]]) as usize;
+                at += 2;
+                if packet_len > MAX_DATAGRAM_BYTES || at + packet_len > bytes.len() {
+                    return None;
+                }
+                let packet = Packet::decode(&bytes[at..at + packet_len]).ok()?;
+                if packet.kind != PacketKind::AudioFrame || PcmFrame::from_packet(&packet).is_err() {
+                    return None;
+                }
+                if sender != own_id {
+                    remote = remote.saturating_add(1);
+                }
+                at += packet_len;
+            }
+            (at == bytes.len()).then_some((cursor, remote))
+        }
+
+        fn report(status: &mpsc::Sender<String>, previous: &mut String, next: String) {
+            if *previous != next {
+                *previous = next.clone();
+                let _ = status.send(next);
+            }
+        }
+
+        fn run(config: Config, outbound: Receiver<Vec<Vec<u8>>>, status: mpsc::Sender<String>) {
+            // A finite request timeout ensures a dead relay never stalls game
+            // ticks: all HTTP requests run on this worker thread, not the game.
+            let agent = ureq::AgentBuilder::new()
+                .timeout(Duration::from_millis(700))
+                .build();
+            let mut last_status = String::new();
+            let mut cursor = 0u64;
+            let mut sent_frames = 0u64;
+            let mut received_frames = 0u64;
+            let mut connected = false;
+            let mut last_report = Instant::now() - Duration::from_secs(2);
+            report(&status, &mut last_status, "Relay connecting over HTTPS".into());
+
+            loop {
+                let mut frames = Vec::new();
+                if let Ok(batch) = outbound.recv_timeout(Duration::from_millis(35)) {
+                    frames.extend(batch);
+                    while frames.len() < MAX_UPLOAD_PACKETS {
+                        match outbound.try_recv() {
+                            Ok(batch) => {
+                                let remaining = MAX_UPLOAD_PACKETS - frames.len();
+                                frames.extend(batch.into_iter().take(remaining));
+                            }
+                            Err(_) => break,
+                        }
+                    }
+                }
+
+                if !frames.is_empty() {
+                    let body = upload_body(&frames);
+                    let result = body.as_ref().ok_or(()).and_then(|body| {
+                        agent
+                            .post(&config.endpoint)
+                            .set("Authorization", &format!("Bearer {}", config.token))
+                            .set("X-HVC-Client", &config.client_id)
+                            .set("X-HVC-Session", &config.session_id)
+                            .set("X-HVC-Room", &config.room)
+                            .set("Content-Type", "application/octet-stream")
+                            .send_bytes(body)
+                            .map(|_| ())
+                            .map_err(|_| ())
+                    });
+                    if result.is_ok() {
+                        sent_frames = sent_frames.saturating_add(frames.len() as u64);
+                        connected = true;
+                    } else {
+                        connected = false;
+                    }
+                }
+
+                let response = agent
+                    .get(&config.endpoint)
+                    .set("Authorization", &format!("Bearer {}", config.token))
+                    .set("X-HVC-Client", &config.client_id)
+                    .set("X-HVC-Session", &config.session_id)
+                    .set("X-HVC-Room", &config.room)
+                    .set("X-HVC-Cursor", &cursor.to_string())
+                    .call();
+
+                if let Ok(response) = response {
+                    let mut body = Vec::new();
+                    let read_ok = response
+                        .into_reader()
+                        .take((MAX_RESPONSE_BYTES + 1) as u64)
+                        .read_to_end(&mut body)
+                        .is_ok();
+                    if read_ok
+                        && let Some((next_cursor, remote_count)) = parse_response(&body, &config.client_id)
+                    {
+                        cursor = next_cursor;
+                        received_frames = received_frames.saturating_add(remote_count);
+                        connected = true;
+                    } else {
+                        connected = false;
+                    }
+                } else {
+                    connected = false;
+                }
+
+                if last_report.elapsed() >= Duration::from_secs(1) {
+                    let state = if connected {
+                        format!(
+                            "Relay connected — sent {sent_frames}, received {received_frames} remote frames; playback pending"
+                        )
+                    } else {
+                        "Relay offline — check HTTPS endpoint, certificate and client token".into()
+                    };
+                    report(&status, &mut last_status, state);
+                    last_report = Instant::now();
+                }
+                thread::sleep(Duration::from_millis(15));
+            }
+        }
+
+        #[cfg(test)]
+        mod tests {
+            use super::*;
+
+            #[test]
+            fn refuses_plain_http_or_missing_identity() {
+                std::env::remove_var("HORIZON_VOICE_CHAT_RELAY_URL");
+                std::env::remove_var("HORIZON_VOICE_CHAT_RELAY_TOKEN");
+                std::env::remove_var("HORIZON_VOICE_CHAT_ROOM");
+                std::env::remove_var("HORIZON_VOICE_CHAT_CLIENT_ID");
+                assert!(Config::from_env().unwrap().is_none());
+                assert!(!safe_id("../room"));
+                assert!(!safe_id(""));
+                assert!(safe_id("survival-1"));
+            }
+        }
+    }
+
+    #[cfg(feature = "audio")]
     struct AudioRuntime {
         capture: Option<super::microphone::MicrophoneCapture>,
         receiver: Option<std::sync::mpsc::Receiver<Vec<i16>>>,
