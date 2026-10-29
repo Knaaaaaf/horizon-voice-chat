@@ -48,13 +48,24 @@ and server-authoritative player membership and positions. The separate token
 bucket helper can enforce a caller-defined token budget only after a trusted
 session identity has been established; it is not a network limiter by itself.
 
-## Payloads
+## AudioFrame payload v1
 
-Payloads are presently opaque. The AudioFrame kind does not imply that Opus is
-already wired in, or that a payload can be decoded. A later protocol revision
-must specify codec, sample rate, frame duration, negotiation, key rotation,
-handshake challenges, and failure behavior before this codec is used for live
-voice.
+AudioFrame payloads use a six-byte PCM header followed by mono signed PCM16
+samples. All fields are little-endian.
+
+| Offset | Size | Field | Rule |
+| --- | ---: | --- | --- |
+| 0 | 4 | Sample rate | 8000–48000 samples/second |
+| 4 | 2 | Sample count | Must equal ceil(sample_rate / 100), approximately 10 ms |
+| 6 | variable | PCM16 samples | One signed 16-bit little-endian sample per output frame |
+
+The decoder requires the payload length to exactly equal six bytes plus two
+bytes per sample. At 48 kHz, a frame contains 480 samples (960 bytes); with the
+six-byte PCM header and 14-byte packet header, the datagram is 980 bytes, below
+the 1200-byte cap. This is uncompressed PCM, not Opus, so bandwidth use is high.
+The optional microphone backend emits frames only for supported device sample
+rates. A future version should negotiate a voice codec and authenticated session
+setup before use over public networks.
 
 ## Tests
 
