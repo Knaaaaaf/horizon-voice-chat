@@ -31,13 +31,14 @@ Audio frames are currently uncompressed PCM16. The native backend captures and
 drains frames locally but does not transmit them. See [the protocol specification](docs/protocol-v1.md)
 for exact fields and known limits.
 
-## Planned features
+## Remaining features
 
-- Proximity voice with configurable distance and spatial audio.
-- Push-to-talk, mute, and clear microphone/connection status.
-- Authenticated client/server transport and server-side relay.
-- Wire capture to an explicit push-to-talk/mute control, transport, playback, and a supported codec.
-- Explicit privacy controls: microphone capture only after the player enables it.
+- Authenticated, encrypted client/server transport and server-side relay.
+- Opus or another suitable voice codec; PCM16 is not bandwidth-efficient.
+- Audio playback, jitter-buffer playout, and distance-based spatial attenuation.
+- Pass only PTT-eligible frames to the network sender; implement voice activation only if supported.
+- Connection settings, peer state, disconnect handling and cross-platform microphone testing.
+- Keep capture opt-in, stop it on mute/off, and never transmit before authenticated session setup.
 
 ## Important architecture note
 
