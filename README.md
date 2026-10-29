@@ -3,48 +3,55 @@
 A native Rust voice-chat port for Horizon, inspired by
 [Simple Voice Chat](https://github.com/henkelmax/simple-voice-chat).
 
-> **Status: early scaffold — not a working voice-chat mod yet.** This repository
-> currently starts from the Horizon native-mixin template. It does not capture
-> microphone audio, play voice audio, transmit packets, or connect clients to a
-> voice server. See [VOICE_CHAT_PORT.md](docs/VOICE_CHAT_PORT.md) for the
-> implementation plan and current API blockers.
+> **Status: protocol foundation only — not a working voice-chat mod yet.**
+> This branch adds a bounded packet framing codec and sequence guard with Rust
+> unit tests. It does not capture microphone audio, play voice audio, open a
+> network socket, authenticate players, or relay packets through a server.
 
-## Target features
+## Implemented
+
+- Versioned packet envelope with a 14-byte header and 1200-byte datagram cap.
+- Validation for magic, version, packet kind, reserved flags and payload size.
+- Monotonic per-session sequence guard with duplicate/stale rejection and
+  u32 wraparound handling.
+- Unit tests for round trips, malformed input, boundaries and sequence handling.
+
+See [the protocol specification](docs/protocol-v1.md) for exact fields and
+known security/compatibility limits.
+
+## Planned features
 
 - Proximity voice with configurable distance and spatial audio.
 - Push-to-talk, mute, and clear microphone/connection status.
-- A dedicated voice transport with versioned packets and server-side validation.
-- Configurable server address/port and sensible connection timeouts.
-- Explicit privacy controls: microphone capture only when the player enables it.
+- Authenticated client/server transport and server-side relay.
+- Audio capture/playback and a supported codec integration.
+- Explicit privacy controls: microphone capture only after the player enables it.
 
 ## Important architecture note
 
-The upstream Simple Voice Chat project is a Java mod with its own client/server
-integration. Horizon is a Rust rewrite, so its Java mod cannot be loaded directly.
-A real port needs supported Horizon hooks for client audio capture/playback,
-networking, player identity/positions, and server-side voice handling. The
-current template's block-break hook is only a starter example; it is not voice
-chat functionality.
+Horizon is a Rust rewrite with its own mod API. The Java jar from Simple Voice
+Chat cannot be loaded directly. The pinned Horizon mod API still lacks a
+mod-facing client/server networking channel and microphone capture interface.
+Those integration points must be implemented upstream or made available before
+a working port can be completed. See [the port roadmap](docs/VOICE_CHAT_PORT.md).
 
-## Build the current scaffold
+## Native scaffold
 
-This repository follows the native `horizon-mixins` source-mixin path and builds
-a custom Horizon executable; it is not an ordinary `.jar` or sandboxed `.hmod`
-mod. Requirements and pinned source revisions are documented below and in
-[compatibility.json](compatibility.json).
+This repository follows the horizon-mixins source-mixin path and builds a
+custom Horizon executable; it is not an ordinary jar or sandboxed hmod mod.
+The inherited block-break hook is a temporary smoke test for native module
+injection, not a voice feature. Requirements and pinned source revisions are
+documented in compatibility.json.
 
-```sh
-cargo fetch --locked
-cargo test --workspace --locked --offline
-cargo fmt --all --check
-python3 tools/test_template.py
-```
+## Build and validate
 
-For the full native build workflow, pinned dependencies, and validation
-requirements, see the original template instructions below in the repository
-history or consult [VOICE_CHAT_PORT.md](docs/VOICE_CHAT_PORT.md) before attempting
-to run it. Do not treat a successful template build as proof that voice chat
-works.
+Run cargo fetch --locked, cargo test --workspace --locked --offline,
+cargo fmt --all --check, and python3 tools/test_template.py on a Linux
+development machine with the pinned horizon-mixins checkout available.
+
+The Rust tests are committed but have not yet been run in this environment,
+because Rust/Cargo is unavailable here. A successful template build would not
+prove that audio or voice networking works.
 
 ## Reference
 
@@ -52,4 +59,4 @@ works.
 - [Horizon](https://github.com/horizon-rust/horizon)
 - [Horizon Mixins](https://github.com/horizon-rust/horizon-mixins)
 
-License: MIT (see [LICENSE](LICENSE)).
+License: MIT (see LICENSE).
