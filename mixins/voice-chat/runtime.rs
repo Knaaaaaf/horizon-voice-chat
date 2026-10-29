@@ -446,7 +446,10 @@ mod tests {
 
     #[test]
     fn jitter_buffer_requires_nonzero_capacity_and_can_skip_lost_frames() {
-        assert!(matches!(JitterBuffer::new(1, 0), Err(PushError::ZeroCapacity)));
+        assert!(matches!(
+            JitterBuffer::new(1, 0),
+            Err(PushError::ZeroCapacity)
+        ));
         let mut buffer = JitterBuffer::new(5, 4).unwrap();
         buffer.push(audio_packet(7)).unwrap();
         assert!(buffer.skip_missing(7));
