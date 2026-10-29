@@ -744,10 +744,10 @@ pub mod native_bridge {
         if let Ok(cwd) = std::env::current_dir() {
             roots.extend(cwd.ancestors().take(5).map(Path::to_path_buf));
         }
-        if let Ok(exe) = std::env::current_exe() {
-            if let Some(parent) = exe.parent() {
-                roots.extend(parent.ancestors().take(5).map(Path::to_path_buf));
-            }
+        if let Ok(exe) = std::env::current_exe()
+            && let Some(parent) = exe.parent()
+        {
+            roots.extend(parent.ancestors().take(5).map(Path::to_path_buf));
         }
         roots.sort();
         roots.dedup();
@@ -875,13 +875,13 @@ pub mod native_bridge {
         fn tick(&mut self) {
             self.ticks = self.ticks.wrapping_add(1);
 
-            // 20 game ticks/s: poll the files twice per second, not on every
-            // frame, while still discovering the profile directory on startup.
-            if self.settings_dir.is_none() || self.ticks % 10 == 1 {
-                if let Some(dir) = settings_directory() {
-                    self.settings = read_settings_at(&dir);
-                    self.settings_dir = Some(dir);
-                }
+            // 20 game ticks/s: poll twice a second. Retry profile discovery
+            // at the same cadence when the launcher uses an unusual directory.
+            if self.ticks == 1 || self.ticks % 10 == 1
+                && let Some(dir) = settings_directory()
+            {
+                self.settings = read_settings_at(&dir);
+                self.settings_dir = Some(dir);
             }
 
             let status = self.backend_status();
