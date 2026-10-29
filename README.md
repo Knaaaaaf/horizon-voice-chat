@@ -43,10 +43,10 @@ for exact fields and known limits.
 ## Important architecture note
 
 Horizon is a Rust rewrite with its own mod API. The Java jar from Simple Voice
-Chat cannot be loaded directly. The pinned Horizon mod API still lacks a
-mod-facing client/server networking channel and microphone capture interface.
-Those integration points must be implemented upstream or made available before
-a working port can be completed. See [the port roadmap](docs/VOICE_CHAT_PORT.md).
+Chat cannot be loaded directly. The pinned Horizon mod API still lacks
+mod-facing sockets and microphone capture, so this repository adds a native
+source-mixin bridge for local capture. Authenticated encrypted networking and
+the server relay remain separate milestones. See [the port roadmap](docs/VOICE_CHAT_PORT.md).
 
 ## In-game GUI companion
 
