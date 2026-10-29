@@ -920,20 +920,27 @@ pub mod native_bridge {
     #[cfg(feature = "audio")]
     mod relay_client {
         use std::{
+            collections::BTreeMap,
             io::Read,
-            sync::mpsc::{self, Receiver, SyncSender, TrySendError},
+            sync::{
+                Arc, Mutex,
+                mpsc::{self, Receiver, SyncSender, TrySendError},
+            },
             thread,
             time::{Duration, Instant, SystemTime, UNIX_EPOCH},
         };
 
         use super::super::{
             pcm_codec::PcmFrame,
+            pcm_playback::PlaybackQueue,
             voice_protocol::{MAX_DATAGRAM_BYTES, Packet, PacketKind},
         };
 
         const MAX_UPLOAD_PACKETS: usize = 32;
         const MAX_RESPONSE_BYTES: usize = 512 * 1024;
         const MAX_RESPONSE_PACKETS: usize = 256;
+        const PLAYOUT_DELAY_SLOTS: u64 = 8;
+        const MIX_RATE: u32 = 48_000;
 
         struct Config {
             endpoint: String,
@@ -941,6 +948,12 @@ pub mod native_bridge {
             room: String,
             client_id: String,
             session_id: String,
+        }
+
+        struct RemoteFrame {
+            slot: u64,
+            sample_rate: u32,
+            samples: Vec<i16>,
         }
 
         fn safe_id(value: &str) -> bool {
@@ -985,11 +998,18 @@ pub mod native_bridge {
                 {
                     return Err("Relay URL must be an HTTPS endpoint ending in /v1/frames".into());
                 }
-                if token.len() < 32 || token.bytes().any(|byte| byte.is_ascii_whitespace()) {
-                    return Err("Relay token must be at least 32 non-whitespace characters".into());
+                if token.len() < 32
+                    || token
+                        .bytes()
+                        .any(|byte| !(byte.is_ascii_alphanumeric() || b"-_".contains(&byte)))
+                {
+                    return Err("Relay token must be at least 32 URL-safe characters".into());
                 }
                 if !safe_id(&room) || !safe_id(&client_id) {
-                    return Err("Relay room/client ID must use 1–64 ASCII letters, digits, '.', '_' or '-'".into());
+                    return Err(
+                        "Relay room/client ID must use 1–64 ASCII letters, digits, '.', '_' or '-'"
+                            .into(),
+                    );
                 }
 
                 let now = SystemTime::now()
@@ -1013,7 +1033,20 @@ pub mod native_bridge {
         }
 
         impl RelayWorker {
-            pub(super) fn start() -> Result<Option<Self>, String> {
+            pub(super) fn configuration_requested() -> bool {
+                [
+                    "HORIZON_VOICE_CHAT_RELAY_URL",
+                    "HORIZON_VOICE_CHAT_RELAY_TOKEN",
+                    "HORIZON_VOICE_CHAT_ROOM",
+                    "HORIZON_VOICE_CHAT_CLIENT_ID",
+                ]
+                .iter()
+                .any(|key| std::env::var_os(key).is_some())
+            }
+
+            pub(super) fn start(
+                playback: Option<Arc<Mutex<PlaybackQueue>>>,
+            ) -> Result<Option<Self>, String> {
                 let Some(config) = Config::from_env()? else {
                     return Ok(None);
                 };
@@ -1021,7 +1054,7 @@ pub mod native_bridge {
                 let (status_sender, statuses) = mpsc::channel::<String>();
                 thread::Builder::new()
                     .name("horizon-voice-relay".into())
-                    .spawn(move || run(config, outbound, status_sender))
+                    .spawn(move || run(config, outbound, status_sender, playback))
                     .map_err(|_| "Could not start relay worker thread".to_string())?;
                 Ok(Some(Self { sender, statuses }))
             }
@@ -1042,7 +1075,9 @@ pub mod native_bridge {
             if frames.is_empty() || frames.len() > MAX_UPLOAD_PACKETS {
                 return None;
             }
-            let mut body = Vec::with_capacity(6 + frames.iter().map(|frame| frame.len() + 2).sum::<usize>());
+            let mut body = Vec::with_capacity(
+                6 + frames.iter().map(|frame| frame.len() + 2).sum::<usize>(),
+            );
             body.extend_from_slice(b"HVB1");
             body.extend_from_slice(&(frames.len() as u16).to_le_bytes());
             for frame in frames {
@@ -1059,22 +1094,27 @@ pub mod native_bridge {
             Some(body)
         }
 
-        /// Validates the bounded response before advancing the relay cursor.
-        /// Frames from other clients are counted for status now; playback is a
-        /// separate stage and is deliberately not faked here.
-        fn parse_response(bytes: &[u8], own_id: &str) -> Option<(u64, u64)> {
-            if bytes.len() < 14 || bytes.len() > MAX_RESPONSE_BYTES || &bytes[..4] != b"HVR1" {
+        /// Response wire layout: HVR1, next cursor (u64), server time-slot (u64),
+        /// count (u16), then slot (u64), sender-id and packet for each record.
+        fn parse_response(bytes: &[u8], own_id: &str) -> Option<(u64, u64, Vec<RemoteFrame>)> {
+            if bytes.len() < 22 || bytes.len() > MAX_RESPONSE_BYTES || &bytes[..4] != b"HVR1" {
                 return None;
             }
             let cursor = u64::from_le_bytes(bytes[4..12].try_into().ok()?);
-            let count = u16::from_le_bytes([bytes[12], bytes[13]]) as usize;
+            let server_slot = u64::from_le_bytes(bytes[12..20].try_into().ok()?);
+            let count = u16::from_le_bytes([bytes[20], bytes[21]]) as usize;
             if count > MAX_RESPONSE_PACKETS {
                 return None;
             }
-            let mut at = 14usize;
-            let mut remote = 0u64;
+            let mut at = 22usize;
+            let mut remote = Vec::with_capacity(count);
             for _ in 0..count {
-                let sender_len = *bytes.get(at)? as usize;
+                if at + 9 > bytes.len() {
+                    return None;
+                }
+                let slot = u64::from_le_bytes(bytes[at..at + 8].try_into().ok()?);
+                at += 8;
+                let sender_len = bytes[at] as usize;
                 at += 1;
                 if sender_len == 0 || sender_len > 64 || at + sender_len + 2 > bytes.len() {
                     return None;
@@ -1090,15 +1130,20 @@ pub mod native_bridge {
                     return None;
                 }
                 let packet = Packet::decode(&bytes[at..at + packet_len]).ok()?;
-                if packet.kind != PacketKind::AudioFrame || PcmFrame::from_packet(&packet).is_err() {
+                let frame = PcmFrame::from_packet(&packet).ok()?;
+                if packet.kind != PacketKind::AudioFrame {
                     return None;
                 }
                 if sender != own_id {
-                    remote = remote.saturating_add(1);
+                    remote.push(RemoteFrame {
+                        slot,
+                        sample_rate: frame.sample_rate,
+                        samples: frame.samples,
+                    });
                 }
                 at += packet_len;
             }
-            (at == bytes.len()).then_some((cursor, remote))
+            (at == bytes.len()).then_some((cursor, server_slot, remote))
         }
 
         fn report(status: &mpsc::Sender<String>, previous: &mut String, next: String) {
@@ -1108,9 +1153,62 @@ pub mod native_bridge {
             }
         }
 
-        fn run(config: Config, outbound: Receiver<Vec<Vec<u8>>>, status: mpsc::Sender<String>) {
-            // A finite request timeout ensures a dead relay never stalls game
-            // ticks: all HTTP requests run on this worker thread, not the game.
+        fn mix_incoming(pending: &mut BTreeMap<u64, Vec<i32>>, frames: Vec<RemoteFrame>, now_slot: u64) {
+            for frame in frames {
+                // Frames outside the jitter window are too late to play in sync.
+                if frame.slot.saturating_add(PLAYOUT_DELAY_SLOTS) <= now_slot
+                    || !(8_000..=48_000).contains(&frame.sample_rate)
+                {
+                    continue;
+                }
+                let mixed = pending.entry(frame.slot).or_insert_with(|| vec![0; 480]);
+                for (index, accumulated) in mixed.iter_mut().enumerate() {
+                    let source_index = index * frame.sample_rate as usize / MIX_RATE as usize;
+                    let sample = frame.samples[source_index.min(frame.samples.len() - 1)];
+                    *accumulated =
+                        (*accumulated + i32::from(sample)).clamp(i16::MIN as i32, i16::MAX as i32);
+                }
+            }
+            while pending.len() > 512 {
+                pending.pop_first();
+            }
+        }
+
+        fn flush_ready(
+            pending: &mut BTreeMap<u64, Vec<i32>>,
+            playback: &Option<Arc<Mutex<PlaybackQueue>>>,
+            now_slot: u64,
+        ) {
+            let ready: Vec<u64> = pending
+                .keys()
+                .copied()
+                .take_while(|slot| slot.saturating_add(PLAYOUT_DELAY_SLOTS) <= now_slot)
+                .collect();
+            for slot in ready {
+                let Some(mixed) = pending.remove(&slot) else {
+                    continue;
+                };
+                if let Some(playback) = playback {
+                    let samples: Vec<i16> = mixed
+                        .into_iter()
+                        .map(|sample| sample.clamp(i16::MIN as i32, i16::MAX as i32) as i16)
+                        .collect();
+                    let mut queue = match playback.lock() {
+                        Ok(queue) => queue,
+                        Err(poisoned) => poisoned.into_inner(),
+                    };
+                    queue.enqueue(&samples, MIX_RATE);
+                }
+            }
+        }
+
+        fn run(
+            config: Config,
+            outbound: Receiver<Vec<Vec<u8>>>,
+            status: mpsc::Sender<String>,
+            playback: Option<Arc<Mutex<PlaybackQueue>>>,
+        ) {
+            // All HTTPS requests live on this worker thread, never on Game::tick.
             let agent = ureq::AgentBuilder::new()
                 .timeout(Duration::from_millis(700))
                 .build();
@@ -1120,6 +1218,7 @@ pub mod native_bridge {
             let mut received_frames = 0u64;
             let mut connected = false;
             let mut last_report = Instant::now() - Duration::from_secs(2);
+            let mut pending = BTreeMap::<u64, Vec<i32>>::new();
             report(&status, &mut last_status, "Relay connecting over HTTPS".into());
 
             loop {
@@ -1176,10 +1275,13 @@ pub mod native_bridge {
                         .read_to_end(&mut body)
                         .is_ok();
                     if read_ok
-                        && let Some((next_cursor, remote_count)) = parse_response(&body, &config.client_id)
+                        && let Some((next_cursor, server_slot, incoming)) =
+                            parse_response(&body, &config.client_id)
                     {
                         cursor = next_cursor;
-                        received_frames = received_frames.saturating_add(remote_count);
+                        received_frames = received_frames.saturating_add(incoming.len() as u64);
+                        mix_incoming(&mut pending, incoming, server_slot);
+                        flush_ready(&mut pending, &playback, server_slot);
                         connected = true;
                     } else {
                         connected = false;
@@ -1189,9 +1291,14 @@ pub mod native_bridge {
                 }
 
                 if last_report.elapsed() >= Duration::from_secs(1) {
+                    let playback_state = if playback.is_some() {
+                        "playback active"
+                    } else {
+                        "playback unavailable"
+                    };
                     let state = if connected {
                         format!(
-                            "Relay connected — sent {sent_frames}, received {received_frames} remote frames; playback pending"
+                            "Relay connected — sent {sent_frames}, received {received_frames} remote frames; {playback_state}"
                         )
                     } else {
                         "Relay offline — check HTTPS endpoint, certificate and client token".into()
@@ -1239,8 +1346,9 @@ pub mod native_bridge {
                 assert!(parse_response(b"nope", "client").is_none());
                 let mut empty = Vec::from(&b"HVR1"[..]);
                 empty.extend_from_slice(&0u64.to_le_bytes());
+                empty.extend_from_slice(&0u64.to_le_bytes());
                 empty.extend_from_slice(&0u16.to_le_bytes());
-                assert_eq!(parse_response(&empty, "client"), Some((0, 0)));
+                assert_eq!(parse_response(&empty, "client"), Some((0, 0, Vec::new())));
                 empty.push(1);
                 assert!(parse_response(&empty, "client").is_none());
             }
