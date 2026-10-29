@@ -1,0 +1,20 @@
+[mod]
+id = "example-mod"
+version = "0.1.0"
+priority = 100
+
+[compatibility]
+horizon_revision = "028f60881678a9a0e3e198f693a82858fa475c76"
+
+[[module]]
+id = "runtime"
+file = "crates/horizon-client/src/game.rs"
+name = "example_mod"
+source = "runtime.rs"
+
+[[injection]]
+id = "before-break"
+kind = "HEAD"
+target = "horizon_client::game::Game<'_>::break_block"
+helper = "break.rs"
+bindings = [{ name = "pos", ty = "[i32;3]", value = "pos" }]
