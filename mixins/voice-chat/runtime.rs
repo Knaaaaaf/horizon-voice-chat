@@ -141,6 +141,50 @@ pub mod voice_protocol {
     }
 }
 
+pub mod proximity {
+    /// True when a listener is within the speaker's 3D voice radius.
+    ///
+    /// Invalid coordinates, non-finite ranges, negative ranges and arithmetic
+    /// overflow are rejected rather than accidentally broadening the audience.
+    pub fn within_range(speaker: [f64; 3], listener: [f64; 3], range: f64) -> bool {
+        if !range.is_finite()
+            || range < 0.0
+            || speaker.iter().any(|value| !value.is_finite())
+            || listener.iter().any(|value| !value.is_finite())
+        {
+            return false;
+        }
+
+        let dx = speaker[0] - listener[0];
+        let dy = speaker[1] - listener[1];
+        let dz = speaker[2] - listener[2];
+        let distance_squared = dx * dx + dy * dy + dz * dz;
+        let range_squared = range * range;
+
+        distance_squared.is_finite()
+            && range_squared.is_finite()
+            && distance_squared <= range_squared
+    }
+
+    /// Select listeners in range, preserving candidate order and excluding the
+    /// speaker. Callers must provide authenticated identities and authoritative
+    /// positions; this pure helper does not authenticate or relay any packets.
+    pub fn eligible_recipients<'a>(
+        speaker_id: &str,
+        speaker_position: [f64; 3],
+        candidates: &'a [(&'a str, [f64; 3])],
+        range: f64,
+    ) -> Vec<&'a str> {
+        candidates
+            .iter()
+            .filter_map(|(id, position)| {
+                (*id != speaker_id && within_range(speaker_position, *position, range))
+                    .then_some(*id)
+            })
+            .collect()
+    }
+}
+
 // Temporary native hook used only to prove that the template still stages.
 // It does not capture or transmit voice audio.
 pub fn block_break_message(pos: [i32; 3]) -> String {
@@ -156,6 +200,7 @@ pub fn before_break(pos: [i32; 3]) {
 
 #[cfg(test)]
 mod tests {
+    use super::proximity::{eligible_recipients, within_range};
     use super::voice_protocol::{
         CodecError, HEADER_LEN, MAX_DATAGRAM_BYTES, MAX_PAYLOAD_BYTES, Packet, PacketKind,
         SequenceGuard,
@@ -251,5 +296,29 @@ mod tests {
         assert!(!guard.accept(1));
         guard.reset();
         assert!(guard.accept(1));
+    }
+
+    #[test]
+    fn proximity_uses_three_dimensional_distance_and_rejects_invalid_values() {
+        assert!(within_range([0.0, 0.0, 0.0], [3.0, 4.0, 0.0], 5.0));
+        assert!(!within_range([0.0, 0.0, 0.0], [5.1, 0.0, 0.0], 5.0));
+        assert!(!within_range([f64::NAN, 0.0, 0.0], [0.0, 0.0, 0.0], 5.0));
+        assert!(!within_range([0.0, 0.0, 0.0], [0.0, 0.0, 0.0], f64::NAN));
+        assert!(!within_range([0.0, 0.0, 0.0], [0.0, 0.0, 0.0], -1.0));
+    }
+
+    #[test]
+    fn recipient_filter_excludes_speaker_and_out_of_range_players() {
+        let candidates = [
+            ("speaker", [0.0, 0.0, 0.0]),
+            ("near", [2.0, 0.0, 0.0]),
+            ("edge", [0.0, 3.0, 4.0]),
+            ("far", [6.0, 0.0, 0.0]),
+            ("invalid", [f64::NAN, 0.0, 0.0]),
+        ];
+        assert_eq!(
+            eligible_recipients("speaker", [0.0, 0.0, 0.0], &candidates, 5.0),
+            vec!["near", "edge"]
+        );
     }
 }
