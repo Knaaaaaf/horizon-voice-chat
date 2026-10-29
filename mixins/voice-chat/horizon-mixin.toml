@@ -20,3 +20,9 @@ kind = "HEAD"
 target = "horizon_client::game::Game<'_>::break_block"
 helper = "break.rs"
 bindings = [{ name = "pos", ty = "[i32;3]", value = "pos" }]
+
+[[injection]]
+id = "native-voice-bridge-each-game-tick"
+kind = "HEAD"
+target = "horizon_client::game::Game<'_>::tick"
+helper = "tick.rs"
