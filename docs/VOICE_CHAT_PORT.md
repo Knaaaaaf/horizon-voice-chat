@@ -72,8 +72,9 @@ or send/relay any packets. None of these components is a secure transport.
 - [x] CI — formatting, Clippy, Rust unit tests and native-mixin fixture passed
       for the foundation revision.
 - [x] M2a — add optional cpal capture and bounded mono PCM frame assembly.
-- [ ] M2b — wire capture to explicit push-to-talk/mute controls and test lifecycle.
-- [ ] M3 — establish a versioned, authenticated client/server relay.
+- [x] M2b — wire mic enable/mute, PTT key state and backend status through the native bridge.
+- [ ] M2c — test native audio lifecycle on supported desktop platforms.
+- [ ] M3 — establish a versioned, authenticated, encrypted client/server relay.
 - [ ] M4 — add Opus/compatible codec, voice playback, and a user-visible control.
 - [ ] M5 — wire proximity filtering and spatial attenuation into live multiplayer.
 - [ ] M6 — test disconnects, malformed packets, rate limits, mute/privacy, and
