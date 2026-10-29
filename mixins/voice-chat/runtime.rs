@@ -1211,6 +1211,7 @@ pub mod native_bridge {
             // All HTTPS requests live on this worker thread, never on Game::tick.
             let agent = ureq::AgentBuilder::new()
                 .timeout(Duration::from_millis(700))
+                .redirects(0)
                 .build();
             let mut last_status = String::new();
             let mut cursor = 0u64;
@@ -1362,7 +1363,7 @@ pub mod native_bridge {
         attempted: bool,
         last_error: Option<String>,
         relay: Option<relay_client::RelayWorker>,
-        playback: Option<super::pcm_playback::AudioPlayback>,
+        _playback: Option<super::pcm_playback::AudioPlayback>,
         relay_attempted: bool,
         relay_status: String,
         sequence: u32,
@@ -1377,7 +1378,7 @@ pub mod native_bridge {
                 attempted: false,
                 last_error: None,
                 relay: None,
-                playback: None,
+                _playback: None,
                 relay_attempted: false,
                 relay_status: "Relay not configured — local capture only".into(),
                 sequence: 0,
@@ -1395,7 +1396,7 @@ pub mod native_bridge {
                     match super::pcm_playback::AudioPlayback::start() {
                         Ok(playback) => {
                             playback_queue = Some(playback.queue());
-                            self.playback = Some(playback);
+                            self._playback = Some(playback);
                         }
                         Err(_) => {}
                     }
