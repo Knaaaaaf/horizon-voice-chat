@@ -60,7 +60,7 @@ impl Game<'_> {
         base = ['--workspace', str(original), '--mods', str(root/'mixins')]
         report = json.loads(run([str(cli), 'check', *base, '--out', str(stage), '--trust-native-mods']).stdout)
         assert report['injections'] == 1 and report['modules'] == 1
-        assert '6 passed' in report['cargo_stdout']
+        assert 'test result: ok.' in report['cargo_stdout']
         first = snapshot(stage)
         second = json.loads(run([str(cli), 'check', *base, '--out', str(stage), '--trust-native-mods']).stdout)
         assert not second['stage_changed'] and snapshot(stage) == first
