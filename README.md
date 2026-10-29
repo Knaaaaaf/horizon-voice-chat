@@ -18,6 +18,7 @@ A native Rust voice-chat port for Horizon, inspired by
   coordinates/ranges.
 - Bounded reorder buffer for late/out-of-order frames, with explicit missing-frame
   skipping controlled by a future playout scheduler.
+- Deterministic token-bucket rate limiter to prepare per-session relay limits.
 - Unit tests for round trips, malformed input, boundaries, sequence handling,
   proximity selection and jitter-buffer ordering.
 
