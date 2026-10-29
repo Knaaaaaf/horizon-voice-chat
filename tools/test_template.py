@@ -44,6 +44,7 @@ def main():
 pub struct Game<'a> { pub positions: &'a mut Vec<[i32;3]> }
 impl Game<'_> {
     pub fn break_block(&mut self,pos:[i32;3])->i32 {self.positions.push(pos); 7}
+    pub fn tick(&mut self) {}
 }
 #[test] fn original_body_and_result_are_preserved() {
     let mut positions=Vec::new();
@@ -51,6 +52,7 @@ impl Game<'_> {
     assert_eq!(game.break_block([1,2,3]),7);
     assert_eq!(game.break_block([-1,64,8]),7);
     assert_eq!(positions,vec![[1,2,3],[-1,64,8]]);
+    game.tick();
 }
 ''')
         (original/'rust-toolchain.toml').write_bytes((root/'rust-toolchain.toml').read_bytes())
@@ -59,7 +61,7 @@ impl Game<'_> {
         before = snapshot(original)
         base = ['--workspace', str(original), '--mods', str(root/'mixins')]
         report = json.loads(run([str(cli), 'check', *base, '--out', str(stage), '--trust-native-mods']).stdout)
-        assert report['injections'] == 1 and report['modules'] == 1
+        assert report['injections'] == 2 and report['modules'] == 1
         assert 'test result: ok.' in report['cargo_stdout']
         first = snapshot(stage)
         second = json.loads(run([str(cli), 'check', *base, '--out', str(stage), '--trust-native-mods']).stdout)
