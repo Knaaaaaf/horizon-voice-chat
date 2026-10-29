@@ -82,8 +82,8 @@ def safe_id(value: str) -> bool:
 def parse_clients(raw: str) -> dict[str, ClientCredential]:
     """Validate HVC_RELAY_CLIENTS JSON without ever logging token values."""
     value = json.loads(raw)
-    if not isinstance(value, dict) or not value:
-        raise ValueError("HVC_RELAY_CLIENTS must be a non-empty JSON object")
+    if not isinstance(value, dict) or not value or len(value) > 256:
+        raise ValueError("HVC_RELAY_CLIENTS must be a JSON object with 1–256 clients")
     clients: dict[str, ClientCredential] = {}
     seen_tokens: list[str] = []
     for client_id, item in value.items():
@@ -100,6 +100,8 @@ def parse_clients(raw: str) -> dict[str, ClientCredential]:
         if (
             not isinstance(rooms, list)
             or not rooms
+            or len(rooms) > 64
+            or len(set(rooms)) != len(rooms)
             or any(not isinstance(room, str) or not safe_id(room) for room in rooms)
         ):
             raise ValueError(f"rooms for {client_id!r} must be a list of valid room IDs")
@@ -405,10 +407,35 @@ class RelayHandler(BaseHTTPRequestHandler):
 class RelayHTTPServer(ThreadingHTTPServer):
     daemon_threads = True
     allow_reuse_address = True
+    request_queue_size = 64
 
     def __init__(self, address: tuple[str, int], clients: dict[str, ClientCredential]):
         self.clients = clients
+        self._request_slots = threading.BoundedSemaphore(64)
         super().__init__(address, RelayHandler)
+
+    def get_request(self):
+        request, address = super().get_request()
+        # Avoid holding worker threads indefinitely while a client dribbles
+        # a request body or never reads its response.
+        request.settimeout(5.0)
+        return request, address
+
+    def process_request(self, request, client_address):
+        if not self._request_slots.acquire(blocking=False):
+            request.close()
+            return
+        try:
+            super().process_request(request, client_address)
+        except BaseException:
+            self._request_slots.release()
+            raise
+
+    def process_request_thread(self, request, client_address):
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self._request_slots.release()
 
 
 def serve() -> None:
