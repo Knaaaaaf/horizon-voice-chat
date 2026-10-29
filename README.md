@@ -75,9 +75,9 @@ until an authenticated encrypted transport and server relay are implemented.
 
 This repository follows the horizon-mixins source-mixin path and builds a
 custom Horizon executable; it is not an ordinary jar or sandboxed hmod mod.
-The inherited block-break hook is a temporary smoke test for native module
-injection, not a voice feature. Requirements and pinned source revisions are
-documented in compatibility.json.
+The inherited block-break hook is still a temporary smoke test, while the new
+Game::tick hook drives the native settings bridge and microphone capture.
+Requirements and pinned source revisions are documented in compatibility.json.
 
 ## Build and validate
 
