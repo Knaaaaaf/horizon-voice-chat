@@ -1,4 +1,4 @@
-name: Native mod template
+name: Horizon Voice Chat native prototype
 on:
   push:
   pull_request:
