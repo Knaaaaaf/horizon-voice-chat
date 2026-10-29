@@ -1558,13 +1558,17 @@ pub mod native_bridge {
         fn tick(&mut self) {
             self.ticks = self.ticks.wrapping_add(1);
 
-            // 20 game ticks/s: poll twice a second. Retry profile discovery
-            // at the same cadence when the launcher uses an unusual directory.
-            if (self.ticks == 1 || self.ticks % 10 == 1)
+            // Discover the profile directory at startup and retry twice/s if
+            // the launcher stores profiles in an unusual location. Once found,
+            // read the few small preference files each game tick so short PTT
+            // presses cannot be lost between a press/release pair.
+            if (self.settings_dir.is_none() || self.ticks % 10 == 1)
                 && let Some(dir) = settings_directory()
             {
-                self.settings = read_settings_at(&dir);
                 self.settings_dir = Some(dir);
+            }
+            if let Some(dir) = &self.settings_dir {
+                self.settings = read_settings_at(dir);
             }
 
             let status = self.backend_status();
