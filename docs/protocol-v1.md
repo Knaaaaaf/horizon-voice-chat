@@ -2,8 +2,8 @@
 
 ## Status and scope
 
-Implemented in the voice-chat runtime as a standard-library-only codec with
-unit tests. This is an internal, experimental wire format for the Horizon port;
+Implemented in the voice-chat runtime as a standard-library-only codec, plus a
+separate 3D proximity selection helper, both with unit tests. This is an internal, experimental wire format for the Horizon port;
 it is **not compatible with Simple Voice Chat's Java protocol**.
 
 This document defines packet framing only. No UDP socket, microphone capture,
@@ -55,6 +55,6 @@ voice.
 
 The Rust tests cover round-trip serialization, exact maximum packet size,
 oversized payload rejection, malformed header/length rejection, and sequence
-duplicate/stale/wraparound behavior. They have been added to source but have
-**not yet been run in this environment** because the Rust toolchain is not
-available here.
+duplicate/stale/wraparound behavior and proximity boundary/invalid-input
+handling. They have been added to source but have **not yet been run for this
+latest change** in this environment because the Rust toolchain is not available here.
