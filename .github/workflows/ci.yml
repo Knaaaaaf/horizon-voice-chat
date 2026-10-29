@@ -24,3 +24,35 @@ jobs:
       - run: cargo clippy --workspace --all-targets --locked --offline -- -D warnings
       - run: cargo test --workspace --locked --offline
       - run: python3 tools/test_template.py
+
+  native-audio:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install Linux audio headers
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev pkg-config
+      - name: Install pinned Rust
+        run: rustup toolchain install 1.95.0 --profile minimal --component rustfmt --component clippy
+      - name: Check out pinned mixin transformer
+        run: |
+          git clone https://github.com/horizon-rust/horizon-mixins ../horizon-mixins
+          git -C ../horizon-mixins checkout "$(python3 -c 'import json; print(json.load(open("compatibility.json"))["horizon_mixins_revision"])')"
+          cargo fetch --locked --manifest-path ../horizon-mixins/Cargo.toml
+      - name: Check out pinned Horizon source
+        run: |
+          revision="$(python3 -c 'import json; print(json.load(open("compatibility.json"))["horizon_revision"])')"
+          git init ../horizon
+          git -C ../horizon remote add origin https://github.com/horizon-rust/horizon
+          git -C ../horizon fetch --depth 1 origin "$revision"
+          git -C ../horizon checkout --detach FETCH_HEAD
+      - name: Fetch pinned Horizon dependencies
+        run: cargo fetch --locked --manifest-path ../horizon/Cargo.toml
+      - name: Fetch voice-chat workspace dependencies
+        run: cargo fetch --locked
+      - name: Compile and test injected runtime with audio enabled
+        run: python3 tools/horizon.py test --horizon ../horizon --audio --target-dir target/horizon-audio-cargo
