@@ -229,7 +229,7 @@ pub mod pcm_capture {
             let (sender, _receiver) = sync_channel(0);
             let dropped = Arc::new(AtomicU64::new(0));
             let mut assembler = PcmFrameAssembler::new(1, 8_000, dropped.clone()).unwrap();
-            assembler.push(&vec![42_i16; 80], |sample| sample, &sender);
+            assembler.push(&[42_i16; 80], |sample| sample, &sender);
             assert_eq!(dropped.load(Ordering::Relaxed), 1);
         }
 
