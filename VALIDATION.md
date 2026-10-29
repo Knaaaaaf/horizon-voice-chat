@@ -1,8 +1,8 @@
 # Validation
 
-## Latest GitHub Actions run
+## Latest code validation
 
-Run 40964713173 is validating head commit
+GitHub Actions run 40964713173 passed for code commit
 73037fce593fe1f9e11ca8b2e3bc9c6305522eb3:
 https://github.com/Knaaaaaf/horizon-voice-chat/actions/runs/40964713173
 
@@ -10,7 +10,7 @@ https://github.com/Knaaaaaf/horizon-voice-chat/actions/runs/40964713173
 - `cargo fmt --all --check` — passed.
 - `cargo clippy --workspace --all-targets --locked --offline -- -D warnings` — passed.
 - `cargo test --workspace --locked --offline` — passed.
-- `python3 tools/test_template.py` — running when this file was updated.
+- `python3 tools/test_template.py` — passed.
 
 ## Scope of checks
 
