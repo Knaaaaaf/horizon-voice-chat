@@ -3,10 +3,11 @@
 A native Rust voice-chat port for Horizon, inspired by
 [Simple Voice Chat](https://github.com/henkelmax/simple-voice-chat).
 
-> **Status: protocol foundation only — not a working voice-chat mod yet.**
-> This branch includes a bounded packet codec, jitter buffer, proximity/rate-limit
-> helpers, and an optional cpal microphone-capture backend. Capture is not wired
-> to an in-game control or transport yet; it does not play or transmit voice.
+> **Status: native capture is wired to the GUI; network voice is not connected yet.**
+> The native mixin polls the companion's own Horizon storage files, honors explicit
+> mic enable/mute and PTT state, and starts/stops the optional cpal capture stream.
+> Captured frames are drained locally; there is still no authenticated transport,
+> server relay, codec compression, or playback.
 
 ## Implemented
 
