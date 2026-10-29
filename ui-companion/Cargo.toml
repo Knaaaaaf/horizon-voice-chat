@@ -6,6 +6,10 @@ license = "MIT"
 publish = false
 description = "Horizon Voice Chat in-game UI companion"
 
+# Keep this guest crate outside the root native workspace so cargo fmt/test/check
+# can target it independently against the pinned Horizon SDK.
+[workspace]
+
 [lib]
 crate-type = ["cdylib"]
 
