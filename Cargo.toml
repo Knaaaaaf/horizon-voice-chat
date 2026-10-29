@@ -10,6 +10,11 @@ description = "Experimental Horizon voice chat protocol and native scaffold"
 # The runtime is also injected as a same-crate module by horizon-mixins.
 path = "mixins/voice-chat/runtime.rs"
 
+[features]
+# The actual Horizon client defines this feature and provides optional cpal.
+# The standalone protocol/test harness leaves it off by default.
+audio = []
+
 [workspace]
 members = ["tools/audit"]
 resolver = "2"
