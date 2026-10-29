@@ -16,8 +16,10 @@ A native Rust voice-chat port for Horizon, inspired by
   u32 wraparound handling.
 - Pure 3D proximity filtering that excludes the speaker and rejects invalid
   coordinates/ranges.
-- Unit tests for round trips, malformed input, boundaries, sequence handling
-  and proximity selection.
+- Bounded reorder buffer for late/out-of-order frames, with explicit missing-frame
+  skipping controlled by a future playout scheduler.
+- Unit tests for round trips, malformed input, boundaries, sequence handling,
+  proximity selection and jitter-buffer ordering.
 
 See [the protocol specification](docs/protocol-v1.md) for exact fields and
 known security/compatibility limits.
