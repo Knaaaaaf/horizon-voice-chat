@@ -795,3 +795,4 @@ mod tests {
         assert_eq!(frame.len(), 80);
         assert!(frame.iter().all(|sample| *sample == 2_000));
     }
+}
