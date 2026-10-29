@@ -52,9 +52,9 @@ Run cargo fetch --locked, cargo test --workspace --locked --offline,
 cargo fmt --all --check, and python3 tools/test_template.py on a Linux
 development machine with the pinned horizon-mixins checkout available.
 
-The Rust tests are committed but have not yet been run in this environment,
-because Rust/Cargo is unavailable here. A successful template build would not
-prove that audio or voice networking works.
+GitHub Actions passed formatting, Clippy, Rust tests and the native-mixin
+fixture for this foundation. Those checks do not prove that audio or voice
+networking works; full native/gameplay and microphone tests remain pending.
 
 ## Reference
 
