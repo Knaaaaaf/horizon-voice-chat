@@ -2,11 +2,14 @@
 
 ## Status
 
-The repository now has three pure Rust building blocks:
+The repository now has several tested Rust building blocks:
 - A bounded 14-byte packet framing codec with strict header/length validation.
 - A per-session sequence guard that rejects duplicates and stale sequence numbers.
 - A bounded jitter/reorder buffer, 3D proximity recipient selection, and a
   deterministic token bucket for per-session rate limits.
+- A PCM frame assembler and an optional cpal microphone input wrapper, gated by
+  Horizon's existing `audio` feature. The wrapper starts only when explicitly
+  called and returns PCM frames through a bounded non-blocking channel.
 
 The tests cover serialization boundaries, malformed input, sequence wraparound,
 out-of-order delivery, buffer bounds, missing-frame skips, invalid positions,
@@ -15,9 +18,9 @@ GitHub Actions has passed formatting, Clippy, unit tests, and the native-mixin
 fixture for the prior foundation commit; this latest jitter-buffer change is
 waiting for its own CI run.
 
-This is still **not a working voice-chat mod**. It has no microphone capture,
-Opus pipeline, network socket, authentication/encryption, audio playback,
-spatial sound integration, or server relay. The inherited block-break hook is
+This is still **not a working voice-chat mod**. The microphone capture wrapper
+is not wired to an in-game push-to-talk control, and there is no Opus pipeline,
+network socket, authentication/encryption, voice playback, or server relay. The inherited block-break hook is
 only a native-mixin staging smoke test.
 
 ## Horizon API blockers
@@ -39,7 +42,8 @@ guessing API names or patching source with string-based rewrites.
    user input; capture frames; support push-to-talk and mute; stop capture when
    disconnected or disabled.
 2. **Codec and frame pipeline** — select a supported codec; bound frame sizes
-   and queues; handle packet loss without unbounded buffering.
+   and queues; handle packet loss without unbounded buffering. PCM capture frames
+   exist, but are not yet encoded or transmitted.
 3. **Authenticated transport** — negotiate protocol and codec; bind packets to
    verified session identity; apply timeouts and replay protection.
 4. **Server relay** — validate sizes, rate-limit senders, and relay only to
@@ -65,9 +69,10 @@ or send/relay any packets. None of these components is a secure transport.
 - [x] M1d — deterministic token-bucket helper for per-session rate limits.
 - [x] CI — formatting, Clippy, Rust unit tests and native-mixin fixture passed
       for the foundation revision.
-- [ ] M2 — confirm supported client microphone/playback and mod-network APIs.
+- [x] M2a — add optional cpal capture and bounded mono PCM frame assembly.
+- [ ] M2b — wire capture to explicit push-to-talk/mute controls and test lifecycle.
 - [ ] M3 — establish a versioned, authenticated client/server relay.
-- [ ] M4 — add microphone capture, push-to-talk, codec, and playback.
+- [ ] M4 — add Opus/compatible codec, voice playback, and a user-visible control.
 - [ ] M5 — wire proximity filtering and spatial attenuation into live multiplayer.
 - [ ] M6 — test disconnects, malformed packets, rate limits, mute/privacy, and
       supported operating systems.
