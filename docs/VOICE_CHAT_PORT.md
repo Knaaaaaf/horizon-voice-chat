@@ -14,15 +14,14 @@ The repository now has several tested Rust building blocks:
 
 The tests cover serialization boundaries, malformed input, sequence wraparound,
 out-of-order delivery, buffer bounds, missing-frame skips, invalid positions,
-and token-bucket exhaustion/refill behavior.
-GitHub Actions has passed formatting, Clippy, unit tests, and the native-mixin
-fixture for the prior foundation commit; this latest jitter-buffer change is
-waiting for its own CI run.
+and token-bucket exhaustion/refill behavior. A native Game::tick hook now polls
+the companion's official storage files, applies mic enable/mute and PTT state,
+starts/stops cpal capture, and publishes status for the GUI to display.
 
-This is still **not a working voice-chat mod**. The microphone capture wrapper
-is not wired to an in-game push-to-talk control, and there is no Opus pipeline,
-network socket, authentication/encryption, voice playback, or server relay. The inherited block-break hook is
-only a native-mixin staging smoke test.
+This is still **not a working multiplayer voice-chat mod**. Captured PCM frames
+are drained locally and discarded; no voice leaves the client yet. There is no
+authenticated/encrypted transport, server relay, Opus pipeline, or playback.
+The inherited block-break hook remains only a native-mixin staging smoke test.
 
 ## Horizon API blockers
 
