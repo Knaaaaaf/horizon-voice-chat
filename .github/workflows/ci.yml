@@ -55,4 +55,4 @@ jobs:
       - name: Fetch voice-chat workspace dependencies
         run: cargo fetch --locked
       - name: Compile and test injected runtime with audio enabled
-        run: python3 tools/horizon.py test --horizon ../horizon --audio --target-dir target/horizon-audio-cargo
+        run: python3 tools/horizon.py check --horizon ../horizon --audio --target-dir target/horizon-audio-cargo
