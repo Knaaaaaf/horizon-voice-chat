@@ -101,8 +101,8 @@ def parse_clients(raw: str) -> dict[str, ClientCredential]:
             not isinstance(rooms, list)
             or not rooms
             or len(rooms) > 64
-            or len(set(rooms)) != len(rooms)
             or any(not isinstance(room, str) or not safe_id(room) for room in rooms)
+            or len(set(rooms)) != len(rooms)
         ):
             raise ValueError(f"rooms for {client_id!r} must be a list of valid room IDs")
         seen_tokens.append(token)
