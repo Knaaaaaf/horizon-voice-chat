@@ -1363,7 +1363,6 @@ pub mod native_bridge {
         last_error: Option<String>,
         relay: Option<relay_client::RelayWorker>,
         playback: Option<super::pcm_playback::AudioPlayback>,
-        playback_error: Option<String>,
         relay_attempted: bool,
         relay_status: String,
         sequence: u32,
@@ -1379,7 +1378,6 @@ pub mod native_bridge {
                 last_error: None,
                 relay: None,
                 playback: None,
-                playback_error: None,
                 relay_attempted: false,
                 relay_status: "Relay not configured — local capture only".into(),
                 sequence: 0,
@@ -1398,9 +1396,8 @@ pub mod native_bridge {
                         Ok(playback) => {
                             playback_queue = Some(playback.queue());
                             self.playback = Some(playback);
-                            self.playback_error = None;
                         }
-                        Err(error) => self.playback_error = Some(error),
+                        Err(_) => {}
                     }
                 }
                 match relay_client::RelayWorker::start(playback_queue) {
