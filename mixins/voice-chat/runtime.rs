@@ -1167,7 +1167,7 @@ pub mod native_bridge {
         ) {
             for frame in frames {
                 // Frames outside the jitter window are too late to play in sync.
-                if frame.slot.saturating_add(PLAYOUT_DELAY_SLOTS) <= now_slot
+                if frame.slot.saturating_add(PLAYOUT_DELAY_SLOTS) < now_slot
                     || !(8_000..=48_000).contains(&frame.sample_rate)
                 {
                     continue;
