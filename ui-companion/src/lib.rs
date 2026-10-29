@@ -30,7 +30,6 @@ struct VoiceUi {
     muted: bool,
     push_to_talk: bool,
     distance: usize,
-    menu_open: bool,
 }
 
 const DISTANCES: [u32; 4] = [8, 16, 32, 48];
@@ -104,7 +103,6 @@ impl VoiceUi {
     }
 
     fn open(&mut self) {
-        self.menu_open = true;
         let _ = ui::open_screen(&Screen {
             title: "Horizon Voice Chat".into(),
             widgets: self.widgets(),
@@ -154,7 +152,6 @@ impl Mod for VoiceUi {
             muted: stored_bool("muted", false),
             push_to_talk: stored_bool("ptt", true),
             distance: stored_distance(),
-            menu_open: false,
         };
         this.page();
         this.draw_status();
@@ -182,10 +179,6 @@ impl Mod for VoiceUi {
             _ => return,
         }
         self.changed();
-    }
-
-    fn ui_closed(&mut self) {
-        self.menu_open = false;
     }
 
     fn ui_settings_opened(&mut self) {
