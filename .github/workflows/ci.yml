@@ -56,3 +56,18 @@ jobs:
         run: cargo fetch --locked
       - name: Compile and test injected runtime with audio enabled
         run: python3 tools/horizon.py check --horizon ../horizon --audio --target-dir target/horizon-audio-cargo
+
+  ui-companion:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install pinned Rust and wasm target
+        run: |
+          rustup toolchain install 1.95.0 --profile minimal --component rustfmt --component clippy
+          rustup target add wasm32-unknown-unknown --toolchain 1.95.0
+      - name: Check companion formatting
+        run: cargo fmt --manifest-path ui-companion/Cargo.toml --all -- --check
+      - name: Test companion state helpers
+        run: cargo test --manifest-path ui-companion/Cargo.toml
+      - name: Check WebAssembly component guest
+        run: cargo check --manifest-path ui-companion/Cargo.toml --target wasm32-unknown-unknown
