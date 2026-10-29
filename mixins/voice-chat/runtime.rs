@@ -661,7 +661,6 @@ pub mod proximity {
     }
 }
 
-
 /// Polls the GUI companion's persisted settings and controls the native microphone.
 ///
 /// Horizon's current WASM mod API intentionally has no direct microphone or
@@ -846,7 +845,9 @@ pub mod native_bridge {
             if self.capture.is_none() {
                 return format!(
                     "Microphone error — {}",
-                    self.last_error.as_deref().unwrap_or("capture did not start")
+                    self.last_error
+                        .as_deref()
+                        .unwrap_or("capture did not start")
                 );
             }
             if settings.push_to_talk {
@@ -926,7 +927,10 @@ pub mod native_bridge {
             std::env::temp_dir().join(format!(
                 "horizon-voice-bridge-{}-{}",
                 std::process::id(),
-                SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
             ))
         }
 
@@ -988,7 +992,6 @@ pub mod native_bridge {
         }
     }
 }
-
 
 // Temporary native hook used only to prove that the template still stages.
 // It does not capture or transmit voice audio.
