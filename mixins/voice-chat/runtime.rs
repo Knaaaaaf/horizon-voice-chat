@@ -181,8 +181,7 @@ pub mod rate_limiter {
 
             if now_ms >= self.last_ms {
                 let elapsed_ms = now_ms - self.last_ms;
-                let refill = elapsed_ms
-                    .saturating_mul(u64::from(self.refill_tokens_per_second));
+                let refill = elapsed_ms.saturating_mul(u64::from(self.refill_tokens_per_second));
                 self.tokens_milli = self
                     .tokens_milli
                     .saturating_add(refill)
