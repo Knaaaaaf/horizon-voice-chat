@@ -1,0 +1,9 @@
+id = "horizon_voice_chat_ui"
+name = "Horizon Voice Chat"
+version = "0.1.0"
+description = "In-game voice chat controls for the experimental native audio and HTTPS room relay prototype."
+authors = ["Knaaaaaf"]
+api = "0.1"
+side = "client"
+capabilities = ["ui", "input", "render", "storage"]
+experimental = ["ui", "input", "render"]

@@ -31,7 +31,7 @@ def main():
     run(['cargo', 'build', '--locked', '--offline', '-p', 'horizon-mixins-cli'], cwd=horizon.MIXINS)
     cli = horizon.MIXINS/'target/debug/horizon-mixins'
     manifests = list((root/'mixins').glob('*/horizon-mixin.toml'))
-    assert len(manifests) == 1, 'this template test expects one example bundle'
+    assert len(manifests) == 1, 'the voice-chat scaffold expects one native mixin bundle'
     manifest = tomllib.loads(manifests[0].read_text())
     with tempfile.TemporaryDirectory(prefix='template-test-', dir=root/'target') as scratch:
         scratch = Path(scratch)
@@ -44,12 +44,15 @@ def main():
 pub struct Game<'a> { pub positions: &'a mut Vec<[i32;3]> }
 impl Game<'_> {
     pub fn break_block(&mut self,pos:[i32;3])->i32 {self.positions.push(pos); 7}
+    pub fn tick(&mut self) {}
 }
 #[test] fn original_body_and_result_are_preserved() {
     let mut positions=Vec::new();
     let mut game=Game {positions:&mut positions};
     assert_eq!(game.break_block([1,2,3]),7);
     assert_eq!(game.break_block([-1,64,8]),7);
+    game.tick();
+    drop(game);
     assert_eq!(positions,vec![[1,2,3],[-1,64,8]]);
 }
 ''')
@@ -59,8 +62,8 @@ impl Game<'_> {
         before = snapshot(original)
         base = ['--workspace', str(original), '--mods', str(root/'mixins')]
         report = json.loads(run([str(cli), 'check', *base, '--out', str(stage), '--trust-native-mods']).stdout)
-        assert report['injections'] == 1 and report['modules'] == 1
-        assert '2 passed' in report['cargo_stdout']
+        assert report['injections'] == 2 and report['modules'] == 1
+        assert 'test result: ok.' in report['cargo_stdout']
         first = snapshot(stage)
         second = json.loads(run([str(cli), 'check', *base, '--out', str(stage), '--trust-native-mods']).stdout)
         assert not second['stage_changed'] and snapshot(stage) == first

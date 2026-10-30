@@ -1,4 +1,4 @@
-name: Native mod template
+name: Horizon Voice Chat native prototype
 on:
   push:
   pull_request:
@@ -24,3 +24,64 @@ jobs:
       - run: cargo clippy --workspace --all-targets --locked --offline -- -D warnings
       - run: cargo test --workspace --locked --offline
       - run: python3 tools/test_template.py
+      - name: Test authenticated relay framing and abuse limits
+        run: python3 tools/relay/test_server.py
+
+  native-audio:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install Linux audio headers
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev pkg-config
+      - name: Install pinned Rust
+        run: rustup toolchain install 1.95.0 --profile minimal --component rustfmt --component clippy
+      - name: Check out pinned mixin transformer
+        run: |
+          git clone https://github.com/horizon-rust/horizon-mixins ../horizon-mixins
+          git -C ../horizon-mixins checkout "$(python3 -c 'import json; print(json.load(open("compatibility.json"))["horizon_mixins_revision"])')"
+          cargo fetch --locked --manifest-path ../horizon-mixins/Cargo.toml
+      - name: Check out pinned Horizon source
+        run: |
+          revision="$(python3 -c 'import json; print(json.load(open("compatibility.json"))["horizon_revision"])')"
+          git init ../horizon
+          git -C ../horizon remote add origin https://github.com/horizon-rust/horizon
+          git -C ../horizon fetch --depth 1 origin "$revision"
+          git -C ../horizon checkout --detach FETCH_HEAD
+      - name: Fetch pinned Horizon dependencies
+        run: cargo fetch --locked --manifest-path ../horizon/Cargo.toml
+      - name: Fetch voice-chat workspace dependencies
+        run: cargo fetch --locked
+      - name: Compile and test injected runtime with audio enabled
+        run: python3 tools/horizon.py check --horizon ../horizon --audio --target-dir target/horizon-audio-cargo
+
+  ui-companion:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install pinned Rust and wasm target
+        run: |
+          rustup toolchain install 1.95.0 --profile minimal --component rustfmt --component clippy
+          rustup target add wasm32-unknown-unknown --toolchain 1.95.0
+      - name: Check companion formatting
+        run: cargo fmt --manifest-path ui-companion/Cargo.toml --all -- --check
+      - name: Test companion state helpers
+        run: cargo test --manifest-path ui-companion/Cargo.toml
+      - name: Check WebAssembly component guest
+        run: cargo check --manifest-path ui-companion/Cargo.toml --target wasm32-unknown-unknown
+      - name: Install pinned Horizon mod packer
+        run: cargo install --git https://github.com/horizon-rust/horizon --rev 028f60881678a9a0e3e198f693a82858fa475c76 cargo-horizon-mod
+      - name: Build installable Horizon mod
+        working-directory: ui-companion
+        run: cargo horizon-mod build
+      - name: Upload .hmod artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: horizon-voice-chat-ui-hmod
+          path: ui-companion/target/horizon-mod/horizon_voice_chat_ui.hmod
+          if-no-files-found: error
+          retention-days: 14

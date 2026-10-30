@@ -1,0 +1,285 @@
+//! In-game UI companion for Horizon Voice Chat.
+//!
+//! The GUI uses Horizon's sandbox-safe storage capability as a narrow control
+//! plane. A native Game::tick mixin reads the companion's own storage directory
+//! and starts/stops cpal capture only after explicit microphone opt-in. Voice
+//! frames are still local-only: encrypted transport and server relay are pending.
+
+use horizon_mod_sdk::{
+    Mod, Registration, input,
+    input::Event,
+    render::{self, Corner, FillShape, Point, Rect, Shape, TextShape},
+    storage,
+    ui::{self, ButtonWidget, Screen, TextWidget, Widget},
+};
+
+const OPEN_KEY: &str = "voice_menu";
+const PTT_KEY: &str = "voice_push_to_talk";
+const MIC_BUTTON: u32 = 1;
+const MUTE_BUTTON: u32 = 2;
+const MODE_BUTTON: u32 = 3;
+const DISTANCE_BUTTON: u32 = 4;
+const SAVE_BUTTON: u32 = 5;
+
+const BG: u32 = 0xB0182028;
+const GREEN: u32 = 0x55DD88;
+const RED: u32 = 0xFF6666;
+const WHITE: u32 = 0xFFFFFF;
+
+struct VoiceUi {
+    mic_enabled: bool,
+    muted: bool,
+    push_to_talk: bool,
+    distance: usize,
+    ptt_down: bool,
+    backend_status: String,
+    screen_open: bool,
+}
+
+const DISTANCES: [u32; 4] = [8, 16, 32, 48];
+
+fn stored_bool(key: &str, default: bool) -> bool {
+    storage::get(key)
+        .and_then(|bytes| String::from_utf8(bytes).ok())
+        .map(|value| value.trim() == "true")
+        .unwrap_or(default)
+}
+
+fn backend_status() -> String {
+    storage::get("backend_status")
+        .and_then(|bytes| String::from_utf8(bytes).ok())
+        .unwrap_or_else(|| "Waiting for native audio status".into())
+}
+
+fn stored_distance() -> usize {
+    storage::get("distance")
+        .and_then(|bytes| String::from_utf8(bytes).ok())
+        .and_then(|value| value.trim().parse::<usize>().ok())
+        .filter(|value| *value < DISTANCES.len())
+        .unwrap_or(1)
+}
+
+impl VoiceUi {
+    fn save(&self) {
+        let _ = storage::set(
+            "mic_enabled",
+            if self.mic_enabled { b"true" } else { b"false" },
+        );
+        let _ = storage::set("muted", if self.muted { b"true" } else { b"false" });
+        let _ = storage::set("ptt", if self.push_to_talk { b"true" } else { b"false" });
+        let _ = storage::set("distance", self.distance.to_string().as_bytes());
+    }
+
+    fn widgets(&self) -> Vec<Widget> {
+        let state = |value: bool| if value { "ON" } else { "OFF" };
+        vec![
+            Widget::Text(TextWidget {
+                id: 10,
+                text: "VOICE CHAT  •  CLIENT CONTROLS".into(),
+                color: WHITE,
+            }),
+            Widget::Text(TextWidget {
+                id: 11,
+                text: format!("Native backend: {}", self.backend_status),
+                color: 0xFFCC66,
+            }),
+            Widget::Button(ButtonWidget {
+                id: MIC_BUTTON,
+                label: format!("Microphone: {}", state(self.mic_enabled)),
+            }),
+            Widget::Button(ButtonWidget {
+                id: MUTE_BUTTON,
+                label: format!("Mute: {}", state(self.muted)),
+            }),
+            Widget::Button(ButtonWidget {
+                id: MODE_BUTTON,
+                label: format!(
+                    "Mode: {}",
+                    if self.push_to_talk {
+                        "Push to talk"
+                    } else {
+                        "Voice activation (basic level gate)"
+                    }
+                ),
+            }),
+            Widget::Button(ButtonWidget {
+                id: DISTANCE_BUTTON,
+                label: format!("Proximity range: {} blocks", DISTANCES[self.distance]),
+            }),
+            Widget::Text(TextWidget {
+                id: 12,
+                text: "Open with V. Hold Push-to-talk (default C); rebind both in Options > Mods."
+                    .into(),
+                color: 0xB8C4D0,
+            }),
+            Widget::Button(ButtonWidget {
+                id: SAVE_BUTTON,
+                label: "Save settings".into(),
+            }),
+        ]
+    }
+
+    fn page(&self) {
+        ui::set_settings(&self.widgets());
+    }
+
+    fn open(&mut self) {
+        self.screen_open = true;
+        let _ = ui::open_screen(&Screen {
+            title: "Horizon Voice Chat".into(),
+            widgets: self.widgets(),
+        });
+    }
+
+    fn draw_status(&self) {
+        let mic_off = self.muted || !self.mic_enabled;
+        let active = self.backend_status.starts_with("Capturing locally");
+        let status = if mic_off {
+            "MIC OFF"
+        } else if active {
+            "MIC ACTIVE"
+        } else {
+            "MIC ENABLED"
+        };
+        let color = if mic_off {
+            RED
+        } else if active {
+            GREEN
+        } else {
+            0xFFCC66
+        };
+        let width = render::text_width(status) + 28.0;
+        render::set_corner(
+            Corner::TopRight,
+            width,
+            18.0,
+            &[
+                Shape::Fill(FillShape {
+                    rect: Rect {
+                        x: 0.0,
+                        y: 0.0,
+                        w: width,
+                        h: 18.0,
+                    },
+                    color: BG,
+                }),
+                Shape::Fill(FillShape {
+                    rect: Rect {
+                        x: 4.0,
+                        y: 6.0,
+                        w: 6.0,
+                        h: 6.0,
+                    },
+                    color,
+                }),
+                Shape::Text(TextShape {
+                    text: status.into(),
+                    at: Point { x: 14.0, y: 4.0 },
+                    color: WHITE,
+                    centered: false,
+                    shadow: true,
+                }),
+            ],
+        );
+    }
+
+    fn changed(&mut self) {
+        self.save();
+        self.page();
+        if self.screen_open {
+            self.open();
+        }
+        self.draw_status();
+    }
+}
+
+impl Mod for VoiceUi {
+    fn init() -> Result<(Self, Registration), String> {
+        input::register_key(OPEN_KEY, "Open voice chat menu", "key.keyboard.v")?;
+        input::register_key(PTT_KEY, "Push to talk", "key.keyboard.c")?;
+        // A key held in the previous game session must never remain held.
+        let _ = storage::set("ptt_down", b"false");
+        let this = Self {
+            mic_enabled: stored_bool("mic_enabled", false),
+            muted: stored_bool("muted", false),
+            push_to_talk: stored_bool("ptt", true),
+            distance: stored_distance(),
+            ptt_down: false,
+            backend_status: backend_status(),
+            screen_open: false,
+        };
+        this.page();
+        this.draw_status();
+        Ok((this, Registration::new().on_tick()))
+    }
+
+    fn tick(&mut self, _tick: u64) {
+        for event in input::poll() {
+            match event {
+                Event::KeyDown(key) if key == OPEN_KEY => self.open(),
+                Event::KeyDown(key) if key == PTT_KEY => {
+                    if !self.ptt_down {
+                        self.ptt_down = true;
+                        let _ = storage::set("ptt_down", b"true");
+                    }
+                }
+                Event::KeyUp(key) if key == PTT_KEY => {
+                    self.ptt_down = false;
+                    let _ = storage::set("ptt_down", b"false");
+                }
+                _ => {}
+            }
+        }
+        let current_status = backend_status();
+        if current_status != self.backend_status {
+            self.backend_status = current_status;
+            self.page();
+            if self.screen_open {
+                self.open();
+            }
+        }
+        self.draw_status();
+    }
+
+    fn ui_select(&mut self, id: u32, _row: u32) {
+        match id {
+            MIC_BUTTON => self.mic_enabled = !self.mic_enabled,
+            MUTE_BUTTON => self.muted = !self.muted,
+            MODE_BUTTON => self.push_to_talk = !self.push_to_talk,
+            DISTANCE_BUTTON => self.distance = (self.distance + 1) % DISTANCES.len(),
+            SAVE_BUTTON => self.save(),
+            _ => return,
+        }
+        self.changed();
+    }
+
+    fn ui_closed(&mut self) {
+        self.screen_open = false;
+        self.ptt_down = false;
+        let _ = storage::set("ptt_down", b"false");
+    }
+
+    fn ui_settings_opened(&mut self) {
+        self.page();
+    }
+}
+
+horizon_mod_sdk::export_mod!(VoiceUi);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn proximity_choices_are_bounded_and_cycle() {
+        assert_eq!(DISTANCES, [8, 16, 32, 48]);
+        assert_eq!((3 + 1) % DISTANCES.len(), 0);
+    }
+
+    #[test]
+    fn menu_widget_ids_are_stable() {
+        assert_ne!(MIC_BUTTON, MUTE_BUTTON);
+        assert_ne!(MODE_BUTTON, DISTANCE_BUTTON);
+        assert_ne!(SAVE_BUTTON, DISTANCE_BUTTON);
+    }
+}

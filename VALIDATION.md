@@ -1,30 +1,31 @@
 # Validation
 
-Validated on Linux with Rust 1.95.0 on 2026-10-28, using the exact revisions in
-`compatibility.json` and the real bundle committed here.
+## Latest code validation
 
-| Check | Result |
-|---|---|
-| `cargo fmt --all --check` | Pass |
-| `cargo clippy --workspace --all-targets --locked --offline -- -D warnings` | Pass |
-| `cargo test --workspace --locked --offline` | Runtime unit test passes |
-| `python3 tools/test_template.py` | Actual bundle compiles in the tiny fixture; original method calls/result, shared runtime, AST audit, unchanged bytes/mtimes and incompatible revision/target rejection pass |
-| `python3 tools/test_stage.py` | Complete pinned Horizon export stages deterministically; original checkout unchanged; exact HEAD/module audit passes |
-| `python3 tools/horizon.py check` | Actual `horizon-client` binary checks successfully with `--no-default-features` |
-| `python3 tools/horizon.py test` | The runtime's embedded test passes inside the actual Horizon game test binary |
+GitHub Actions run 40964713173 passed for code commit
+73037fce593fe1f9e11ca8b2e3bc9c6305522eb3:
+https://github.com/Knaaaaaf/horizon-voice-chat/actions/runs/40964713173
 
-The native check reported 24.76 seconds in Cargo; the native test reported 41.49
-seconds. Both reused an existing external Cargo target directory with cached
-Horizon dependencies. These are compilation/test checks, not a fresh-build
-benchmark. Staging the full export took about 24 seconds per command on this
-machine; a repeated application preserved the stage.
+- `cargo fetch --locked` — passed.
+- `cargo fmt --all --check` — passed.
+- `cargo clippy --workspace --all-targets --locked --offline -- -D warnings` — passed.
+- `cargo test --workspace --locked --offline` — passed.
+- `python3 tools/test_template.py` — passed.
 
-No game was launched and no Minecraft resources or player data were read or
-changed. Interactive logging/gameplay remains a manual check with the compatible
-prepared resources. The source audit verifies only the declared HEAD statement
-and support module differ from pristine Rust ASTs; it does not claim compatibility
-with other Horizon revisions or arbitrary third-party mods.
+## Scope of checks
 
-CI reproduces the formatting, clippy, standalone runtime and tiny-fixture tests.
-The full native checks additionally need a Horizon Git history containing the
-pin and its cached dependencies; use the commands in README.md to reproduce them.
+The standalone Rust tests cover packet framing, sequence guards, proximity
+selection, jitter-buffer ordering/loss skips, and token-bucket refill. The
+native-mixin fixture checks that the runtime can be staged into the pinned
+source-mixin path. Even a fully green fixture is not a gameplay/audio test.
+
+## Still unverified
+
+- Full native Horizon source export and gameplay build/test.
+- Microphone capture, audio playback, codec integration, real UDP transport,
+  authenticated sessions, server relay, and multiplayer proximity audio.
+- Compatibility on Windows/macOS or with a live Minecraft server.
+
+The pinned Horizon mod API does not provide a mod-facing microphone interface
+or a client/server channel for mod halves. This remains a tested protocol and
+geometry foundation, **not a functional voice-chat mod yet**.

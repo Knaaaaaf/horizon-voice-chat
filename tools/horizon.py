@@ -105,6 +105,7 @@ def main():
     parser.add_argument("action", choices=["stage", "check", "build", "test"])
     parser.add_argument("--horizon", type=Path, default=ROOT.parent / "horizon")
     parser.add_argument("--target-dir", type=Path, default=ROOT / "target/horizon-cargo")
+    parser.add_argument("--audio", action="store_true", help="compile with Horizon client audio/cpal enabled")
     args = parser.parse_args()
     horizon = args.horizon.resolve()
     target = args.target_dir.resolve()
@@ -120,10 +121,12 @@ def main():
         if args.action != "stage":
             command = ["cargo", args.action, "--locked", "--offline", "-p", "horizon-client",
                        "--bin", "horizon-client", "--no-default-features", "--target-dir", str(target)]
+            if args.audio:
+                command.extend(["--features", "audio"])
             if args.action == "build":
                 command.extend(["--profile", "fast"])
             if args.action == "test":
-                command.extend(["game::example_mod::tests", "--", "--nocapture"])
+                command.extend(["game::voice_chat::tests", "--", "--nocapture"])
             with lock(target.parent / (target.name + ".mod-template.lock")):
                 run_start = time.monotonic()
                 result = subprocess.run(command, cwd=output, capture_output=True, text=True)
