@@ -73,3 +73,15 @@ jobs:
         run: cargo test --manifest-path ui-companion/Cargo.toml
       - name: Check WebAssembly component guest
         run: cargo check --manifest-path ui-companion/Cargo.toml --target wasm32-unknown-unknown
+      - name: Install pinned Horizon mod packer
+        run: cargo install --git https://github.com/horizon-rust/horizon --rev 028f60881678a9a0e3e198f693a82858fa475c76 cargo-horizon-mod
+      - name: Build installable Horizon mod
+        working-directory: ui-companion
+        run: cargo horizon-mod build
+      - name: Upload .hmod artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: horizon-voice-chat-ui-hmod
+          path: ui-companion/target/horizon-mod/horizon_voice_chat_ui.hmod
+          if-no-files-found: error
+          retention-days: 14
